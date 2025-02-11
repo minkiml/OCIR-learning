@@ -1,0 +1,16 @@
+# System, execution, etc related files 
+
+*.pyc
+*__pycache__
+.DS_Store
+Thumbs.db
+*.pkl
+*.vscode
+
+# Training logs 
+*Logs_
+
+# Dummy files
+*scripts_exp
+*scripts_abl
+note.txt
