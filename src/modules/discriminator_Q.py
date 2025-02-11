@@ -34,7 +34,7 @@ class Discriminator(nn.Module): # bunch of encoder layers
             
         elif args.D_projection == "spc":
             # otherwise, a BERT-style special token (namely compressive token) is done 
-            self.score = nn.Parameter(torch.randn(1,1,args.d_model) * 0.02)
+            self.score_token = nn.Parameter(torch.randn(1,1,args.d_model) * 0.02)
             
         elif args.D_projection == "rnn":
             self.aggregation = src_utils.rnn_aggregation(args.d_model, args.d_model)
@@ -42,15 +42,15 @@ class Discriminator(nn.Module): # bunch of encoder layers
         elif args.D_projection == "None":
             self.aggregation = nn.Identity() 
         
-        self.regressor = nn.Linear(args.d_model, 1)
+        self.regressor = src_utils.Linear(args.d_model, 1)
         
     def forward(self, x):
         # x (N, L, c)
         N, L, c = x.shape
         x_emb = self.fE_projection(x)
         if self.D_projection == "spc":
-            score = self.score.expand(N,-1,-1)
-            x_emb = torch.cat((score, x_emb), dim = 1)                   
+            score_token = self.score_token.expand(N,-1,-1)
+            x_emb = torch.cat((score_token, x_emb), dim = 1)                   
         # positional encoding
         x_emb = self.pos_enc(x_emb)
         for layer in self.TransformerEncoder:
@@ -62,26 +62,6 @@ class Discriminator(nn.Module): # bunch of encoder layers
             score = self.aggregation(x_emb) # (N, d_modle) or (N,L,d_model)
         score = self.regressor(score)
         return score
-    
-    def discriminator_loss(self, real_h, fake_h):
-        # input dim = (B, S, h)
-        # real_ = self.forward(real_h) # (B, 1)
-        # fake_ = self.forward(fake_h) 
-        # a = (real_h - 1)**2
-        # b = (fake_h)**2
-        # # a = (real_ - 1.)**2.
-        # # b = (fake_)**2.
-        # return 0.5 * torch.mean(a + b)
-    
-        a = torch.mean((real_h - 1)**2)
-        b = torch.mean((fake_h)**2)
-        # a = (real_ - 1.)**2.
-        # b = (fake_)**2.
-        return 0.5 * (a + b)
-    
-    def generator_loss(self,fake_h):
-        # fake_ = self.forward(fake_h) 
-        return 0.5 * (torch.mean((fake_h-1.)**2.)) 
     
 class CodePosterior(nn.Module): # bunch of encoder layers
     def __init__(self,args):
@@ -99,16 +79,16 @@ class CodePosterior(nn.Module): # bunch of encoder layers
         self.mlp_encoder = nn.ModuleList(mlp_encoder)
         
         if args.c_type == "discrete":
-            self.classifier = nn.Linear(self.d_model_c,self.dc)
+            self.classifier = src_utils.Linear(self.d_model_c,self.dc)
             self.softmax = nn.Softmax(-1)
         elif args.c_type == "continuous":
             # soft fitting
             if args.c_posterior_param == "soft":
-                self.code_mu_logvar = nn.Linear(self.d_model_c, self.dc * 2)
+                self.code_mu_logvar = src_utils.Linear(self.d_model_c, self.dc * 2)
 
             # hard fitting
-            else: self.code_mu = nn.Linear(self.d_model_c,self.dc)
-                
+            else: self.code_mu = src_utils.Linear(self.d_model_c,self.dc)
+
     def forward(self, x):
         code_emb = self.fC_projection(x)
         N, L, c = x.shape
@@ -136,8 +116,8 @@ class CodePosterior(nn.Module): # bunch of encoder layers
         else:
             return c
     def make_MLP(self):
-        mlp = nn.Sequential(nn.Linear(self.d_model_c, self.d_model_c * 3),
+        mlp = nn.Sequential(src_utils.Linear(self.d_model_c, self.d_model_c * 3),
                             nn.LeakyReLU(0.2),
-                            nn.Linear(self.d_model_c * 3, self.d_model_c))
+                            src_utils.Linear(self.d_model_c * 3, self.d_model_c))
         return mlp 
     

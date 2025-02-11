@@ -14,6 +14,7 @@ def save_args(params, filename, path):
         json.dump(vars(params), f, indent=4)
         
 def save_model(model_, path_, name):
+    model_.train(True)
     torch.save(model_.state_dict(), os.path.join(path_, f"{name}_cp.pth"))
 
 def load_model(model, path_, name):

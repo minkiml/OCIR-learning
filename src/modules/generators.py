@@ -34,7 +34,7 @@ class Decoder(nn.Module):
                                                                        ff_hidden_dim = int(args.d_model * 3), dropout = 0.15,
                                                                        prenorm = True) for _ in range(self.depth)]
         self.TransformerDecoder = nn.ModuleList(TransformerDecoder)
-        self.final_layer = nn.Linear(args.d_model, args.dx)
+        self.final_layer = src_utils.Linear(args.d_model, args.dx)
         
         # p_h(z) & p(c)
         self.h = p_h
@@ -61,7 +61,6 @@ class Decoder(nn.Module):
         
         # sample c ~ p(c)
         c = self.p_c.sample(N_c, fixed_code) # (N, L, dc)
-        print("c in generator", c)
         x = self.forward(z, c)
         return x, [z,z0, c]
     

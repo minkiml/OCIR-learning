@@ -23,6 +23,7 @@ import torch.nn.functional as F
 
 from scipy import linalg
 from src.blocks.more_flows import maf
+from src.blocks import src_utils
 def create_checkerboard_mask(h, seq = False, invert=False):
     '''
     sequence wise mask if a sequence of (N,L,C) is dealt with other wise it is also 
@@ -51,20 +52,20 @@ def create_channel_mask(c_in, seq = False, invert=False):
         mask = 1 - mask
     return mask
 
-class st_network(nn.Module):
+class st_block(nn.Module):
     '''
     A simple neural network for parameterizing s and t
     
     The final output of the network needs to be (dz * 2) as the s and t get split by 2 in the flow layer.  
     '''
     def __init__(self, dz = 10, hidden_dim = 64):
-        super(st_network, self).__init__() 
-        self.param_s_t = nn.Sequential(nn.Linear(dz, hidden_dim),
+        super(st_block, self).__init__() 
+        self.param_s_t = nn.Sequential(src_utils.Linear(dz, hidden_dim, noraml_small= True ),
                                        nn.LeakyReLU(0.2),
-                                       nn.Linear(hidden_dim, hidden_dim),
+                                       src_utils.Linear(hidden_dim, hidden_dim, noraml_small= True ),
                                        nn.LeakyReLU(0.2),
-                                       nn.Linear(hidden_dim, dz * 2))
-        
+                                       src_utils.Linear(hidden_dim, dz * 2 , noraml_small= True))
+
     def forward(self, z):
         return self.param_s_t(z)
 class Linear_flow(nn.Module):
@@ -132,7 +133,7 @@ class CouplingLayer(nn.Module):
         
         # self.scaling_factor = nn.Parameter(torch.zeros(c_in))
         
-        self.scaling_factor = nn.utils.parametrizations.weight_norm(nn.Linear(c_in, c_in))
+        self.scaling_factor = nn.utils.parametrizations.weight_norm(src_utils.Linear(c_in, c_in))
         
         # Register mask as buffer as it is a tensor which is not a parameter,
         # but should be part of the modules state.
@@ -186,7 +187,7 @@ class NormalizingFlow(nn.Module):
         super().__init__()
 
         if transform == "RNVP":
-            flows = [CouplingLayer(network= st_network(dz, hidden_dim= 64), 
+            flows = [CouplingLayer(network=  st_block(dz, hidden_dim= 64), 
                             mask = create_checkerboard_mask(h = dz, seq = False, invert=(i%2==1)),
                             c_in = dz) for i in range(num_layers)] 
             
@@ -197,7 +198,6 @@ class NormalizingFlow(nn.Module):
             flows = [maf.IAF(dim = dz, parity = i%2==1, nh = 64) for i in range(num_layers)] 
             
         self.flows = nn.ModuleList(flows)
-
     def forward(self, z0):  # z0 -> zK
         ldj = torch.zeros(z0.shape[0], device = z0.device)
         z = z0

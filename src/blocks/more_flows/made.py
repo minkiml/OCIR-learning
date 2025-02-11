@@ -8,13 +8,16 @@ binary masks over weights ensure the autoregressive property.
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torch.nn.init as init
 from torch import nn
 
 class MaskedLinear(nn.Linear):
     """ same as Linear except has a configurable mask on the weights """
     
-    def __init__(self, in_features, out_features, bias=True):
-        super().__init__(in_features, out_features, bias)        
+    def __init__(self, in_features, out_features, bias=True, init_relu = False ):
+        super().__init__(in_features, out_features, bias)       
+        self.init_relu = init_relu 
+        self._initialize_weights()
         self.register_buffer('mask', torch.ones(out_features, in_features))
         
     def set_mask(self, mask):
@@ -22,6 +25,15 @@ class MaskedLinear(nn.Linear):
         
     def forward(self, input):
         return F.linear(input, self.mask * self.weight, self.bias)
+    def _initialize_weights(self):
+        if self.init_relu:
+            nn.init.kaiming_normal_(self.weight, mode='fan_out', nonlinearity='relu')
+            if self.bias is not None:
+                nn.init.zeros_(self.bias)
+        else:
+            init.xavier_uniform_(self.weight)
+            if self.bias is not None:
+                init.zeros_(self.bias)
 
 class MADE(nn.Module):
     def __init__(self, nin, hidden_sizes, nout, num_masks=1, natural_ordering=False):

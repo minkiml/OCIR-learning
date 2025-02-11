@@ -1,7 +1,31 @@
 import torch
 import torch.nn as nn
-# TODO shape checking
+import torch.nn.init as init
+from src.blocks import src_utils
 
+class Linear(nn.Linear):
+    def __init__(self, in_features, out_features, 
+                 bias=True, init_relu = False, noraml_small = False):
+        super(Linear, self).__init__(in_features, out_features, bias)
+        self.init_relu = init_relu
+        self.noraml_small = noraml_small
+        self._initialize_weights()
+        
+    def _initialize_weights(self):
+        # TODO: need to set bound
+        if self.init_relu:
+            # nn.init.kaiming_normal_(self.weight, mode='fan_out', nonlinearity='relu')
+            pass
+            if self.bias is not None:
+                nn.init.zeros_(self.bias)
+        else:
+            if self.noraml_small:
+                init.normal_(self.weight, std = 0.01)
+            else:
+                # init.xavier_uniform_(self.weight)
+                if self.bias is not None:
+                    init.zeros_(self.bias)
+                
 class rnn_aggregation(nn.Module):
     def __init__(self,input_dim = 10, hidden_dim = 32, 
                  dropout_ = 0., layer = 1):
@@ -13,6 +37,7 @@ class rnn_aggregation(nn.Module):
                                   batch_first = True,
                                   bias = True,
                                   dropout = dropout_)
+        self.apply(src_utils.init_gru)
     def forward(self, x):
         h0 = torch.zeros((self.layer, x.shape[0], self.hidden_dim)).to(x.device)
         _, h_t = self.gru(x,h0)
@@ -33,7 +58,8 @@ class rnn_decoding_eq(nn.Module):
                             batch_first = True,
                             bias = True,
                             dropout = dropout_)
-        self.linear_layer = nn.Linear(hidden_dim, hidden_dim, bias = False)
+        self.linear_layer = Linear(hidden_dim, hidden_dim, bias = False)
+        self.apply(src_utils.init_gru)
     def forward(self, z, c):
         N, L, dc = c.shape
         _,dz = z.shape
@@ -66,7 +92,8 @@ class rnn_decoding_seqtoken(nn.Module):
         else:
             seqtoken = torch.randn(1, window, dz) * 0.02
             self.register_buffer("seqtoken", seqtoken)
-        self.expansion = nn.Linear(dz,hidden_dim, bias = False)
+        self.expansion = Linear(dz,hidden_dim, bias = False)
+        self.apply(src_utils.init_gru)
     def forward(self, z, c):
         N, L, dc = c.shape
         _, dz = z.shape
@@ -102,3 +129,24 @@ class Sine(nn.Module):
         super(Sine, self).__init__()
     def forward(self, input):
         return torch.sin(input)
+    
+    
+    
+def init_mlps(m):
+    if isinstance(m, nn.Linear):
+        if m.weight is not None:
+            init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            init.zeros_(m.bias)
+
+def init_gru(m):
+    if isinstance(m, nn.GRU):
+        for name, param in m.named_parameters():
+            if 'weight' in name:
+                nn.init.xavier_uniform_(param)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
+
+def init_embedding(m):
+    if isinstance(m, nn.Embedding):
+        nn.init.uniform_(m.weight, -0.1, 0.1)

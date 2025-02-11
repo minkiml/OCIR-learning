@@ -43,6 +43,7 @@ if __name__ == '__main__':
     parser.add_argument("--window", type=int, default=25)
     parser.add_argument("--H", type=int, default=2)
     parser.add_argument("--hyper_lookback", type=int, default=2)
+    parser.add_argument("--time_embedding", type=bool, default=True)
     # parser.add_argument("--ocs_dim", type=int, default=1) num_heads
     
     parser.add_argument("--dx", type=int, default=14)
@@ -50,7 +51,7 @@ if __name__ == '__main__':
     parser.add_argument("--dc", type=int, default=1, help = "if discrete, it is the expected number of ocs")
     parser.add_argument("--d_model", type=int, default=128)
     parser.add_argument("--num_heads", type=int, default=4)
-      
+    
     # Latent encoder
     parser.add_argument("--encoder_E", type=str, default="transformer", choices= ["transformer", "TCN"])
     parser.add_argument("--z_projection", type=str, default="aggregation", 

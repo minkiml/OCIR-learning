@@ -18,12 +18,14 @@ class LatentEncoder(nn.Module):
         super(LatentEncoder, self).__init__() 
         
         self.z_projection = args.z_projection
-        
         self.num_heads = args.num_heads
         self.depth = 2
+        self.time_emb = args.time_embedding
         if args.encoder_E == "transformer":
             # Suppose the longest length of cm data could be 520
-            self.time_embedding = nn.Embedding(num_embeddings= args.window, embedding_dim = args.d_model)
+            if self.time_emb:
+                self.time_embedding = nn.Embedding(num_embeddings= args.window, embedding_dim = args.d_model)
+                src_utils.init_embedding(self.time_embedding)
             self.pos_enc = transformers.SinCosPositionalEncoding(args.d_model, args.window + 2)
             self.fE_projection = transformers.Conv1by1(args.dx, args.d_model)
             
@@ -33,7 +35,7 @@ class LatentEncoder(nn.Module):
                 
             elif args.z_projection == "spc":
                 # otherwise, a BERT-style special token (namely compressive token) is done 
-                self.z = nn.Parameter(torch.randn(1,1,args.d_model) * 0.02)
+                self.compressive_token = nn.Parameter(torch.randn(1,1,args.d_model) * 0.02)
                 
             elif args.z_projection == "rnn":
                 self.latent_aggregation = src_utils.rnn_aggregation(args.d_model, args.d_model)
@@ -45,23 +47,27 @@ class LatentEncoder(nn.Module):
             self.TransformerEncoder = nn.ModuleList(TransformerEncoder)
         
         # mu and logvar
-        self.mu_logvar = nn.Linear(args.d_model, args.dz * 2)
+        self.mu_logvar = src_utils.Linear(args.d_model, args.dz * 2)
         # z' ~ N(mu, sigma) -> p_h(z)
         self.p_h = p_h
-                
     def forward(self, x, tidx = None):
         N, L, c = x.shape
         x_proj = self.fE_projection(x)
-        if tidx is not None:  # TODO: consider not having time embedding in learning representation as generated sequences do not have it unless we attempt to model it in generator as well
-            time_token = self.time_embedding(tidx) # TODO check output shape (N,1, d_model)
-        else:
-            time_token = self.time_embedding(torch.zeros((N,1,1)))
-
-        if self.z_projection == "spc":
-            z = self.z.expand(N,-1,-1)
-            x_emb = torch.cat((z, x_proj,time_token), dim = 1)            
-        else:
+        
+        # Time index embeddings
+        if self.time_emb:
+            if tidx is not None: 
+                time_token = self.time_embedding(tidx) # (N, 1, d_model)
+            else:
+                # For generator-to-encoder inference the time index is not known, so time index 0 is assigned as a unknown time. 
+                time_token = self.time_embedding(torch.zeros((N,1), dtype=torch.long).to(x.device))
             x_emb = torch.cat((x_proj,time_token), dim = 1)
+        else: x_emb = x_proj
+        # add apc as a compressive token
+        if self.z_projection == "spc":
+            compressive_token = self.compressive_token.expand(N,-1,-1)
+            x_emb = torch.cat((compressive_token, x_proj), dim = 1)            
+            
         # positional encoding
         x_emb = self.pos_enc(x_emb)
         for layer in self.TransformerEncoder:
@@ -101,16 +107,16 @@ class CodeEncoder(nn.Module):
         self.fC_projection = transformers.Conv1by1(self.dx, self.d_model_c)
         
         if args.c_type == "discrete":
-            self.classifier = nn.Linear(self.d_model_c,self.dc)
+            self.classifier = src_utils.Linear(self.d_model_c,self.dc)
             self.softmax = nn.Softmax(-1)
         elif args.c_type == "continuous":
             # soft fitting
             if args.c_posterior_param == "soft":
-                self.code_mu_logvar = nn.Linear(self.d_model_c, self.dc * 2)
+                self.code_mu_logvar = src_utils.Linear(self.d_model_c, self.dc * 2)
             # hard fitting
             else: 
-                self.code_mu = nn.Linear(self.d_model_c,self.dc)
-        
+                self.code_mu = src_utils.Linear(self.d_model_c,self.dc)
+
     def forward(self, x):
         code_emb = self.fC_projection(x)
         N, L, c = x.shape
@@ -138,8 +144,7 @@ class CodeEncoder(nn.Module):
         else:
             return c
     def make_MLP(self):
-        mlp = nn.Sequential(nn.Linear(self.d_model_c, self.d_model_c * 3),
-                            # src_utils.Sine(),
+        mlp = nn.Sequential(src_utils.Linear(self.d_model_c, self.d_model_c * 3),
                             nn.LeakyReLU(0.2),
-                            nn.Linear(self.d_model_c * 3, self.d_model_c))
+                            src_utils.Linear(self.d_model_c * 3, self.d_model_c))
         return mlp 

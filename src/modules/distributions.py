@@ -8,13 +8,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class DiagonalGaussian(nn.Module):
-    def __init__(self, dim, mean = 0, var = 1):
+    def __init__(self, dim, mean = 0, var = 1,
+                 device = "cpu"):
         super(DiagonalGaussian, self).__init__()
         self.dim = dim
         self.mean = mean
         self.var = var
-        self.std = np.sqrt(var)  # Standard deviation (sqrt of variance)
+        self.std = torch.sqrt(torch.tensor(var, dtype=torch.float32))  # Standard deviation (sqrt of variance)
 
+        self.device =device
     def sample(self, N, 
                mu = None, 
                log_var = None):
@@ -23,7 +25,7 @@ class DiagonalGaussian(nn.Module):
             N_dim = N
         else: 
             N_dim = N.shape
-        eps = torch.randn(N_dim)  # Standard normal random samples
+        eps = torch.randn(N_dim).to(self.device)  # Standard normal random samples
         samples = eps + (mu if mu is not None else self.mean)
         samples *= torch.exp(0.5 * log_var) if log_var is not None else self.std
         return samples
@@ -41,7 +43,7 @@ class DiagonalGaussian(nn.Module):
         diff = z - mu
         log_prob = -0.5 * torch.sum(((diff / std) ** 2), dim=-1)  # sum over dimensions
         if normalize:
-            log_prob -= 0.5 * z_dim * torch.log(2 * torch.pi)  # Normalizing constant
+            log_prob -= 0.5 * z_dim * torch.log(torch.tensor(2.0 * torch.pi, device=self.device))  # Normalizing constant
         log_prob -= torch.sum(torch.log(std))  # Log of the standard deviations (for each dim)
         return log_prob
 
@@ -50,43 +52,47 @@ class DiagonalGaussian(nn.Module):
         Computes the entropy of the diagonal Gaussian distribution.
         """
         # Entropy of a diagonal Gaussian is: H = 0.5 * (dim * log(2 * pi * e) + sum(log(var)))
-        entropy = 0.5 * (self.dim * torch.log(2 * torch.pi * torch.exp(torch.tensor(1.0))) + torch.sum(torch.log(self.var)))
+        entropy = 0.5 * (self.dim * torch.log(2 * torch.pi * torch.exp(torch.tensor(1., device=self.device))) + torch.sum(torch.log(self.var)))
         return entropy
     
     def NLL(self, z, mu, log_var, aggr = "mean"):
         return -torch.sum(self.log_prob(z, mu, log_var)) if aggr == "sum" else -torch.mean(self.log_prob(z, mu, log_var))
 
     def hard_fitting(self, z_true, z_mu):
-        return F.l1_loss(z_mu, z_true, reduction = 'mean')
+        N = z_true.shape[0]
+        return F.l1_loss(z_mu, z_true, reduction = 'sum') / N
     
 class UniformDistribution(nn.Module):
-    def __init__(self, low=-1., high=1.0):
+    def __init__(self, low=-1., high=1.0,
+                 device = "cpu"):
         """
         Uniform distribution
         """
         super(UniformDistribution, self).__init__()
         self.low = low
         self.high = high
-
+        self.device =device
     def sample(self, N, target:float = None):
         # N shape (*,dc_dim)
         if isinstance(N, tuple):
             N_dim = N
         else: 
             N_dim = N.shape
+        
+        c = torch.rand(N_dim).to(self.device)
         if target is None:
-            return torch.rand(N_dim) * (self.high - self.low) + self.low
+            return c * (self.high - self.low) + self.low
         else:
             if (target > self.high) or (target < self.low):
                 target = 0.1
-            return torch.ones(N_dim) * target
+            return c * target
         
     def log_prob(self, c):
         """
         Computes the log probability of a given input c under the uniform distribution.
         """
         # For uniform distribution, log_prob is -log(high - low) if z is within the bounds.
-        log_prob = torch.full_like(c, -torch.log(torch.tensor(self.high - self.low)))
+        log_prob = torch.full_like(c, -torch.log(torch.tensor(self.high - self.low, device=self.device)))
         # Check if z is within bounds [low, high]
         log_prob = torch.where((c >= self.low) & (c <= self.high), log_prob, torch.tensor(-float('inf')))
         return log_prob
@@ -106,7 +112,7 @@ class UniformDistribution(nn.Module):
         diff = c - mu
         log_prob = -0.5 * torch.sum(((diff / std) ** 2), dim=-1)  # sum over dimensions
         if normalize:
-            log_prob -= 0.5 * c_dim * torch.log(2 * torch.pi)  # Normalizing constant
+            log_prob -= 0.5 * c_dim * torch.log(torch.tensor(2.0) * torch.pi)  # Normalizing constant
         log_prob -= torch.sum(torch.log(std))  # Log of the standard deviations (for each dim)
         return log_prob
     
@@ -114,7 +120,7 @@ class UniformDistribution(nn.Module):
         """
         Computes the entropy of the uniform distribution.
         """
-        return torch.log(torch.tensor(self.high - self.low))
+        return torch.log(torch.tensor(self.high - self.low, device=self.device))
     
     def NLL(self, c, aggr = "sum"):
         return -torch.sum(self.log_prob(c)) if aggr == "sum" else -torch.mean(self.log_prob(c))
@@ -123,10 +129,12 @@ class UniformDistribution(nn.Module):
         return -torch.sum(self.log_prob_gaussian(c, mu, log_var)) if aggr == "sum" else -torch.mean(self.log_prob_gaussian(c, mu, log_var))
     
     def hard_fitting(self, c_true, c_mu):
-        return F.l1_loss(c_mu, c_true, reduction = 'mean')
+        N = c_true.shape[0]
+        return F.l1_loss(c_mu, c_true, reduction = 'sum') / N 
     
 class DiscreteUniform(nn.Module):
-    def __init__(self, num_classes=10, onehot = False):
+    def __init__(self, num_classes=10, onehot = False,
+                 device = "cpu"):
         """
         Discrete uniform. 
         """
@@ -134,7 +142,7 @@ class DiscreteUniform(nn.Module):
         self.onehot = onehot
         self.low = 0
         self.num_classes = num_classes  # Number of discrete values
-
+        self.device =device
     def sample(self, N, target = None):
         # N has shape of (*, dc_dim)
         if isinstance(N, tuple):
@@ -145,14 +153,13 @@ class DiscreteUniform(nn.Module):
         if target is not None:
             if (target > self.num_classes-1) or (target < 0):
                 target = 1
-            c = torch.ones(N_dim + (1,), dtype = int) * target
+            c = torch.ones(N_dim + (1,), dtype = int).to(self.device) * target
         else:
-            c = torch.randint(self.low, self.num_classes, N_dim + (1,)) # (*,1)
+            c = torch.randint(self.low, self.num_classes, N_dim + (1,)).to(self.device) # (*,1)
         
         if self.onehot:
             c = torch.flatten(c, 0, -1)
             c = F.one_hot(c,num_classes = self.num_classes).view(N_dim+(self.num_classes,)) # (*, num_classes)
-            print('!')
         else: pass
         return c
 
@@ -170,8 +177,8 @@ class DiscreteUniform(nn.Module):
     def cross_entropy_loss(self, y, logits): # TODO check later on 
         if self.onehot:
             # We apply softmax to the logits to convert them into probabilities
-            probs = torch.softmax(logits, dim=-1)
-            loss = -torch.sum(y * torch.log(probs), dim=-1)
+            probs = F.log_softmax(logits, dim=-1)
+            loss = -torch.sum(y * probs, dim=-1)
             return torch.mean(loss)
         else:
             tiny = 1e-7  # for numerical stability

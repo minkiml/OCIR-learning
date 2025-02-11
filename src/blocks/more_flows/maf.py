@@ -7,7 +7,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from src.blocks.more_flows import made
-
+from src.blocks import src_utils
 class MAF(nn.Module):
     """ Masked Autoregressive Flow that uses a MADE-style network for fast forward """
     
@@ -16,7 +16,6 @@ class MAF(nn.Module):
         self.dim = dim
         self.net = net_class(dim, dim*2, nh) # (in dim, out dim, hidden dim)
         self.parity = parity
-
     def forward(self, x, ldj):
         # here we see that we are evaluating all of z in parallel, so density estimation will be fast
         st = self.net(x)
@@ -37,7 +36,6 @@ class MAF(nn.Module):
             x[:, i] = (z[:, i] - t[:, i]) * torch.exp(-s[:, i])
             ldj -= s[:, i]
         return x, ldj
-    
 
 class IAF(MAF):
     def __init__(self, *args, **kwargs):

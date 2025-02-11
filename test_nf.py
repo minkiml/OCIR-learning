@@ -28,21 +28,23 @@ if __name__ == '__main__':
                               "window": 25,
                               "d_model": 64,
                               "encoder_E": "transformer",
-                              "z_projection": "aggregation",
-                              "D_projection": "aggregation",
+                              "z_projection": "rnn",
+                              "D_projection": "rnn",
                               "c_posterior_param": "soft",
-                              "num_heads": 4
+                              "num_heads": 4,
+                              "time_embedding": True
                                         })
-    
-    m = OCIR(args, "cpu")
-    device = torch.device(f'cuda:{2}' if torch.cuda.is_available() else 'cpu')
+    device = torch.device(f'cuda:{5}' if torch.cuda.is_available() else 'cpu')
     print(f"GPU (device: {device}) used" if torch.cuda.is_available() else 'cpu used')
         
+    m = OCIR(args, device)
+
+    m.to(device)
     # print(m)
     # model_size(m, "ocir")
     N = 3
-    x = torch.randn((N,args.window, args.dx))
-    tidx = torch.arange(N).reshape(N, 1)
+    x = torch.randn((N,args.window, args.dx)).to(device) 
+    tidx = torch.arange(N).reshape(N, 1).to(device)
     
     ''' fe '''
     # mu, log_var = m.f_E(x, tidx)
@@ -66,31 +68,42 @@ if __name__ == '__main__':
     # print(c_logvar.shape)    
     
     ''' fd & G'''
-    z = m.f_E.encoding(x, tidx)
-    c, _ = m.f_C(x)
+    # z = m.f_E.encoding(x, tidx)
+    # c, _ = m.f_C(x)
     
-    x_rec = m.f_D(z, c)
-    # print(x_rec)
-    print("f_D(z)", x_rec.shape)
-    x_gen, set = m.f_D.generation(N)
-    # print(x_gen)
-    print("G(x|z,c)",x_gen.shape)
-    z,z0, c = set
-    # print(c)
-    print("p(c)",c.shape)
+    # print("f_E(x)", z)
+    
+    # x_rec = m.f_D(z, c)
+    # # print(x_rec)
+    # print("f_D(z)", x_rec.shape)
+    # x_gen, set = m.f_D.generation(N)
+    # # print(x_gen)
+    # print("G(x|z,c)",x_gen.shape)
+    # z,z0, c = set
+    # # print(c)
+    # print("p(c)",c.shape)
     
     
     ''' discrimintor and Q'''
+    # score = m.D(x)
+    # c, _ = m.Q(x)
+    # # print(score)
+    # print("score", score.shape)
+    # # print(c)
+    # print("Q(c|x)", c.shape)
     
-    score = m.D(x)
-    c, _ = m.Q(x)
-    # print(score)
-    print("score", score.shape)
-    # print(c)
-    print("Q(c|x)", c.shape)
+    ''' objective losses'''
     
-    # TODO: check gpu setup, rnn arg, test spc 
-
+    loss_R, R = m.L_R(x, tidx)
+    loss_disc, D = m.L_G_discriminator(x)
+    loss_G, G = m.L_G_generator(x)
+    
+    print(f"loss rec: {R[0]} and loss_KL: {R[1]}")
+    
+    print(f"real from D: {D[0]}  and fake from D {D[1]}")
+    
+    print(f"loss gen {G[0]},  loss_q: {G[1]},  loss_ccz: {G[2]},  and lossccc: {G[3]}")
+    
     # prior_z = distributions.DiagonalGaussian(args.dz, mean = 0, var = 1)
     # prior_c = distributions.UniformDistribution() 
     # prior_c_disc = distributions.DiscreteUniform(args.dc, onehot = True)

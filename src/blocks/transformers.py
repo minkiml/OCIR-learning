@@ -2,11 +2,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.init as init
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
+from src.blocks import src_utils
 class SinCosPositionalEncoding(nn.Module):
     def __init__(self, embed_dim, max_len=5000):
         super().__init__()
@@ -34,8 +32,8 @@ class MultiHeadSelfAttention(nn.Module):
         self.head_dim = embed_dim // num_heads
         self.scale = self.head_dim ** -0.5
 
-        self.qkv_proj = nn.Linear(embed_dim, embed_dim * 3)
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        self.qkv_proj = src_utils.Linear(embed_dim, embed_dim * 3)
+        self.out_proj = src_utils.Linear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None):
@@ -56,8 +54,8 @@ class MultiHeadSelfAttention(nn.Module):
 class FeedForwardNetwork(nn.Module):
     def __init__(self, embed_dim, hidden_dim, dropout=0.1):
         super().__init__()
-        self.fc1 = nn.Linear(embed_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, embed_dim)
+        self.fc1 = src_utils.Linear(embed_dim, hidden_dim )
+        self.fc2 = src_utils.Linear(hidden_dim, embed_dim )
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
@@ -82,14 +80,14 @@ class TransformerEncoderBlock(nn.Module):
             x = self.norm2(x + self.dropout(self.ffn(x)))
         return x
 
+
 class Aggregation(nn.Module):
     # TODO check this 
     def __init__(self, d_model, method='mean'):
         super().__init__()
         self.method = method
         if method == 'weighted':
-            self.attn_weights = nn.Linear(d_model, 1)  # Learnable attention scores
-
+            self.attn_weights = src_utils.Linear(d_model, 1)  # Learnable attention scores
     def forward(self, hidden_states):
         if self.method == 'mean':
             return hidden_states.mean(dim=1)  # Mean pooling
@@ -104,6 +102,12 @@ class Conv1by1(nn.Module):
     def __init__(self, input_dim, d_model):
         super().__init__()
         self.conv = nn.Conv1d(input_dim, d_model, kernel_size=1)
+
+        if self.conv.weight is not None:
+            pass
+            init.xavier_uniform_(self.conv.weight)
+        if self.conv.bias is not None:
+            init.zeros_(self.conv.bias)
     def forward(self, x):
         # x (N, L, c)
         x = x.permute(0,2,1)

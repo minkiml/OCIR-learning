@@ -5,8 +5,25 @@ import torch
 from src.modules import (encoders, generators, discriminator_Q, distributions, flow_transforms) 
 
 
-#TODO: gpu device, init, training, opt,  nf loss , testing the code, rul estimator and task, trajectory and task., visualization, metrics, etc. 
-# CHeck nf-vae objective again.
+'''TODO: 
+1) visualization, metrics
+
+    check dataloading (& full framework once on single minibatch) 
+
+    rul estimator and task 
+
+    ** check data loading first then check full framework
+    ** implement visualization
+    ** Think about and Implemt rul estimator 
+
+2) loading pipeline 
+
+    trajectory model and task
+
+
+
+
+'''
 
 class OCIR(nn.Module):
     def __init__(self, args, device): 
@@ -15,8 +32,9 @@ class OCIR(nn.Module):
         self.c_type = args.c_type
         self.code_posterior_param = args.c_posterior_param
         # Prior Distributions p(z') and p(c)
-        self.prior_z = distributions.DiagonalGaussian(args.dz, mean = 0, var = 1)
-        self.prior_c = distributions.UniformDistribution() if args.c_type == "continuous" else distributions.DiscreteUniform(args.dc, onehot = True)
+        self.prior_z = distributions.DiagonalGaussian(args.dz, mean = 0, var = 1, device=device)
+        self.prior_c = distributions.UniformDistribution(device=device) if args.c_type == "continuous" \
+                                                else distributions.DiscreteUniform(args.dc, onehot = True, device=device)
         
         # NF transform
         self.h = flow_transforms.LatentFlow(args, self.prior_z)
@@ -63,9 +81,9 @@ class OCIR(nn.Module):
         log_qz = log_qz0 - logdet
         log_pz = self.prior_z.log_prob(z)
         # KL div & logdet
-        kl_div = - (log_qz - log_pz).sum()
-        
-        return recon + kl_div
+        kl_div = (log_qz - log_pz).mean()
+        kl_div = torch.clamp(kl_div, min=0)
+        return recon + kl_div, [recon, kl_div]
     
     def L_G_discriminator(self, x):
         sample_size = x.shape[0]
@@ -75,7 +93,7 @@ class OCIR(nn.Module):
         
         real_loss = torch.mean((real -1)**2)
         fake_loss = torch.mean((fake)**2)
-        return 0.5 * (real_loss + fake_loss)
+        return 0.5 * (real_loss + fake_loss), [real_loss, fake_loss]
     
     def L_G_generator(self, x):
         sample_size = x.shape[0]
@@ -92,20 +110,26 @@ class OCIR(nn.Module):
         
         # Generator loss
         gen_loss = 0.5 * torch.mean((gen - 1)**2)
-        # MMI for Q, G
-        NLL_loss_Q = self.prior_c.NLL_gau(c, q_code_mu, q_code_logvar, "sum")
         
-        # CC
+              
+        # CC and MMI for Q, G  
         cc_loss_z = self.prior_z.NLL(z0, mu, logvar, "mean")
         if self.c_type == "continuous":
             if self.code_posterior_param == "soft":
+                # NLL
                 cc_loss_c = self.prior_c.NLL_gau(c, c_gen, c_logvar, "sum")
+                NLL_loss_Q = self.prior_c.NLL_gau(c, q_code_mu, q_code_logvar, "sum")
             elif self.code_posterior_param == "hard":
+                # MSE
                 cc_loss_c = self.prior_c.hard_fitting(c, c_gen)
+                NLL_loss_Q = self.prior_c.hard_fitting(c, q_code_mu)
         elif self.c_type == "discrete":
+            # CE
             cc_loss_c = self.prior_c.cross_entropy_loss(c,c_gen)
-        
-        return gen_loss + NLL_loss_Q + (0.5 * (cc_loss_z + cc_loss_c))
+            NLL_loss_Q = self.prior_c.cross_entropy_loss(c,q_code_mu)
+            
+        return gen_loss + NLL_loss_Q + (0.5 * (cc_loss_z + cc_loss_c)), \
+                [gen_loss, NLL_loss_Q, cc_loss_z, cc_loss_c]
     
     
     
