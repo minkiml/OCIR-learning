@@ -51,7 +51,8 @@ def even_chunks(n):
     return chunks 
 
 def get_continuous_property(X, stds_ = None,
-                            varying = True, swapping_map = None):
+                            varying = True, swapping_map = None,
+                            add_cont = True):
     # get total num of observations  
     num_obs = 0
     for xx in (X.values()):
@@ -69,6 +70,7 @@ def get_continuous_property(X, stds_ = None,
         phi_ = stds_ * 2
     # Generate c for all observations 
     continuous_ocs = (np.random.rand(len_) * 2) -1 # [-1,1]
+    # continuous_ocs = (np.random.randn(len_))  # N(0,1)
     continuous_ocs = np.expand_dims(continuous_ocs,1)
     
     
@@ -83,7 +85,7 @@ def get_continuous_property(X, stds_ = None,
     if varying:
         if swapping_map is None:
             d_ = True
-            chunks_num = 8
+            chunks_num = 16
             iii = 0
             while d_:
                 chunks = even_chunks(chunks_num)
@@ -133,8 +135,9 @@ def get_continuous_property(X, stds_ = None,
     idx_from = 0
     for xx in (X):
         idx_to = X[xx].shape[0] + idx_from
-        X[xx] = X[xx] + continuous_ocs[idx_from: idx_to, :]
-        
+        if add_cont:
+            X[xx] = X[xx] + continuous_ocs[idx_from: idx_to, :]
+        else: pass    
         gt_c[xx] = gt_ocs[idx_from: idx_to, :]
     return X, swapping_map, gt_c
 
@@ -199,7 +202,7 @@ def sliding_window(X, ocs, rul, w_T,
     RL_rul_sets = {"X": torch.tensor(windowed_X, dtype=torch.float32),
                 "ocs": torch.tensor(OCS, dtype=torch.float32),
                 "RUL": torch.tensor(RUL, dtype=torch.float32),
-                "t_idx": torch.tensor(time_indices, dtype=torch.float32)}
+                "t_idx": torch.tensor(time_indices, dtype=torch.long)}
     
     if trajectory:
         windowed_X_lookback = np.concatenate(windowed_X_lookback, axis=0)
@@ -209,7 +212,7 @@ def sliding_window(X, ocs, rul, w_T,
         windowed_tidx_lookback = np.concatenate(windowed_tidx_lookback, axis=0)
         trajectory_sets = {"X_lookback": torch.tensor(windowed_X_lookback, dtype=torch.float32),
                            "ocs_lookback": torch.tensor(windowed_OCS_lookback, dtype=torch.float32),
-                           "t_idx_lookback": torch.tensor(windowed_tidx_lookback, dtype=torch.float32),
+                           "t_idx_lookback": torch.tensor(windowed_tidx_lookback, dtype=torch.long),
                            "X_horizon": torch.tensor(windowed_X_horizon, dtype=torch.float32),
                            "ocs_horizon": torch.tensor(windowed_OCS_horizon, dtype=torch.float32)}
     else:

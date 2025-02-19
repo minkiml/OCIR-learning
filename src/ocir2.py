@@ -25,13 +25,13 @@ from src.blocks import transformers
 
 
 '''
-class OCIR(nn.Module):
+class OCIR2(nn.Module):
     def __init__(self, 
                 dx:int = 14, dz:int = 10, dc:int = 6, window:int = 25, d_model:int = 128, 
                 num_heads:int = 4, z_projection:str = "aggregation", D_projection:str = "aggregation", 
                 time_emb:bool = True, c_type:str = "discrete", c_posterior_param:str = "soft", encoder_E:str = "transformer",
                 device = "cpu"): 
-        super(OCIR, self).__init__()
+        super(OCIR2, self).__init__()
         self.device = device
         self.c_type = c_type
         self.z_projection = z_projection
@@ -60,7 +60,7 @@ class OCIR(nn.Module):
         # Encoders
         self.f_E = encoders.LatentEncoder(dx=dx, dz=dz, window=window, d_model=d_model, 
                                           num_heads=num_heads, z_projection=z_projection, 
-                                          time_emb=time_emb, encoder_E=encoder_E, p_h=self.h, shared_EC= True if self.shared_encoder_layers is not None else False) 
+                                          time_emb=time_emb, encoder_E=encoder_E, p_h=self.prior_z, shared_EC= True if self.shared_encoder_layers is not None else False) 
         
         self.f_C = encoders.CodeEncoder(dx=dx, dc=dc, d_model=d_model, 
                                         c_type=c_type, c_posterior_param=c_posterior_param, shared_EC= True if self.shared_encoder_layers is not None else False)
@@ -97,12 +97,9 @@ class OCIR(nn.Module):
     
     # Objective functions
     def L_R(self, x, tidx, epoch = None):
-        # if epoch is not None:
-        #     annealing = min(1.0, epoch / 7)
-        # else: annealing = 1.0
-        annealing = 1.0
-        N, L, _ = x.shape
-        
+        if epoch is not None:
+            annealing = min(1.0, epoch / 7)
+        else: annealing = 1.0
         # beta is a warm-up coefficient for preventing negative 
         # Encoding
         if self.shared_encoder_layers is not None:
@@ -117,44 +114,26 @@ class OCIR(nn.Module):
             h = x
             hc = x
         mu, log_var, zin = self.f_E(h, tidx)
-        z, logdet, z0 = self.f_E.reparameterization_NF(mu, log_var)
+        z, _, _ = self.f_E.reparameterization_NF(mu, log_var)
         
         c, _ = self.f_C(hc)
         # Decoding
         x_rec = self.f_D(z,c, zin = zin)
         x_rec_G = self.G(z.detach(),c.detach(), zin = zin)
+        
         # Reconstruction & CC is implicitly made since G and f_D share the parameters
-        recon = F.mse_loss(x_rec, x, reduction = 'sum') / (N+L)
-        recon_G = F.mse_loss(x_rec_G, x, reduction = 'sum') / (N+L)
-        '''
-        From normalizing flow, h , 
-        log q(zk|x) = log q(z0|x) - sum_{k=1}^K log |det(df_k/dz_{k-1})|   , where zk  is z in our paper and z0 is z'
+        recon = F.mse_loss(x_rec, x, reduction = 'mean') 
+        recon_G = F.mse_loss(x_rec_G, x, reduction = 'mean') 
+        recon_G = recon_G * 0.05
         
-        KL(q(zk | x), p(z)) = E_{q(zk|x)}[log q(zk|x) - log p(z)]
-                            = E_{q(z0|x)}[log q(z0|x) - sum_{k=1}^K log |det(df_k/dz_{k-1})| - log p(zk)],  with respect to q(z0|x)
-                            -> -KL = E_{q(z0|x)}[- log q(z0|x) + sum_{k=1}^K log |det(df_k/dz_{k-1})| + log p(zk)]  --> we want to minimize it in full ELBO form  
-        '''
-        # logq(z0|x) 
-        log_qz0 = self.prior_z.log_prob(z0, mu, log_var)
-        log_qz = log_qz0 - logdet
-        # logq(zK)
-        log_pz = self.prior_z.log_prob(z)
-        # KL div & logdet
-        kl_div =  log_qz - log_pz # .mean()
-        kl_div =  (log_qz-  log_pz).mean() # .mean()
+        # KL in ELBO
+        kl_div = (-0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).sum(-1)).mean()
+        kl_div = annealing * kl_div
+        # Forward KL
+        z0, logdet,_ = self.h.inverse(mu.detach())
+        MLE_loss = (-(self.prior_z.log_prob(z0)) + logdet).mean() # by NLL   might be - logdet
 
-        
-        
-        # print("logdet: ", logdet)
-        # print(log_qz.mean())
-        # print("logpz", log_pz.mean())
-        # kl_div = torch.clamp(kl_div, min=0)
-        
-        # print("recon", recon)
-        # print("kl_div", kl_div)
-        
-        # x 0.5 as the reconstruction is done through G (shared net) as well 
-        return recon + (annealing*kl_div), [recon, annealing*kl_div, recon_G * 0.2]
+        return recon + (MLE_loss) + kl_div + recon_G, [recon, kl_div, MLE_loss, recon_G]
     
     def L_G_discriminator(self, x):
         sample_size = x.shape[0]
@@ -173,7 +152,7 @@ class OCIR(nn.Module):
     
     def L_G_generator(self, x):
         sample_size = x.shape[0]
-        x_gen, set_latent_samples, log_det = self.G.generation(sample_size) # TODO need to add reverse KL div
+        x_gen, set_latent_samples, log_det = self.G.generation(sample_size)
         z, z0, c, c_logit = set_latent_samples #TODO yield logit samples when gumbel is used
         
         gen = self.D(x_gen)
@@ -182,21 +161,20 @@ class OCIR(nn.Module):
         
         # CC
         if self.shared_encoder_layers is not None:
-            h = self.shared_encoder_layers(x_gen)
+            h = self.shared_encoder_layers(x_gen) # .detach()
             hc = h
             if (self.z_projection == "spc") or (self.z_projection == "seq"):
                 hc = hc[:,1:,:]
             if self.time_emb:
                 hc = hc[:,:-1,:]
         else: 
-            h = x_gen
-            hc = x_gen
-        mu, logvar, _ = self.f_E(h)
-        c_gen, c_logvar = self.f_C(hc)
+            h = x_gen#.detach()
+            hc = x_gen#.detach()
+            
+        mu, _, _ = self.f_E(h)
+        c_gen, _ = self.f_C(hc)
 
-        # TODO
-        # reverse_kl = - log_det.mean()
-        
+
         # Generator loss
         gen_loss = 0.5 * torch.mean((gen - 1)**2)
         
@@ -206,7 +184,7 @@ class OCIR(nn.Module):
         
         # CC and MMI for Q, G  
         # cc_loss_z = self.prior_z.NLL(z0, mu, logvar, "mean") # soft fitting
-        cc_loss_z = self.prior_z.hard_fitting(z0, mu) # One-to-one cycle consistency  # TODO consider reparameterizing mu and doing the cc loss
+        cc_loss_z = self.prior_z.hard_fitting(z.detach(), mu) # z0 & self.h.inverse(mu) or z & mu
         
         if self.c_type == "continuous":
             if self.code_posterior_param == "soft":
@@ -233,10 +211,8 @@ class OCIR(nn.Module):
             #     NLL_loss_Q = self.prior_c.hard_fitting(c_logit if c_logit is not None else c, q_code_mu)
             # else:
             #     raise NotImplementedError("")
-            
-        # print("gen_loss", gen_loss)
-        # print("NLL_loss_Q", NLL_loss_Q)
-        # print("cc_loss_z", cc_loss_z)
-        # print("cc_loss_c", cc_loss_c)
-        return gen_loss + NLL_loss_Q + ((cc_loss_z + 0.2 * cc_loss_c)), \
+
+        cc_loss_c *=0.05
+        cc_loss = 0.15 * (cc_loss_z + cc_loss_c)
+        return gen_loss + NLL_loss_Q + cc_loss, \
                 [gen_loss, NLL_loss_Q, cc_loss_z, cc_loss_c]

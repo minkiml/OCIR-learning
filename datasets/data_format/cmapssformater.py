@@ -48,7 +48,7 @@ def format_CMAPSS(rectification = 125):
         utils.mkdir(save_to_path)
         
         file_name = "train_" + dataset
-        file_ = path_ + file_name + ".txt"
+        file_ = os.path.join(path_, file_name + ".txt")
         df = pd.read_csv(f'{file_}',delimiter = ' ', header=None,
                                 usecols = [0, 2, 3, 4, 
                                            6, 7, 8, 11, 
@@ -67,7 +67,7 @@ def format_CMAPSS(rectification = 125):
             np_ocs = df.iloc[:,1:4].to_numpy()
             # K-mean to reformat the operational settings into class labels
             kmeans = KMeans(6)
-            np_ocs = kmeans.fit_predict(np_ocs).reshape(1,-1)
+            np_ocs = kmeans.fit_predict(np_ocs).reshape(-1,1)
         else: 
             np_ocs = None
             ocs_training = None
@@ -82,7 +82,6 @@ def format_CMAPSS(rectification = 125):
         #     np_ocs = np_ocs.reshape(-1,1) # ground truth ocs
         #     # plot_data(np_array[np.where(entity_labels == 65)[0]], title_ = "cont")
 
-    
         for i, label in enumerate(entity_ids):
             # Training data 100 % 
             indices = np.where(entity_labels == label)[0]
@@ -99,7 +98,7 @@ def format_CMAPSS(rectification = 125):
         '''Testing data with true RUL labels ''' 
         # Seperate incomplete testing data
         file_name = "test_"+dataset
-        file_ = path_ + file_name + ".txt"
+        file_ = os.path.join(path_, file_name + ".txt") 
         df = pd.read_csv(f'{file_}',delimiter = ' ', header=None,
                                 usecols = [0, 2, 3, 4, 
                                             6, 7, 8, 11, # 7, 8, 11, 15, 16 
@@ -114,7 +113,7 @@ def format_CMAPSS(rectification = 125):
         if (dataset == "FD002") or (dataset == "FD004"):
             np_ocs = df.iloc[:,1:4].to_numpy()
             # K-mean to reformat the operational settings into class labels
-            np_ocs = kmeans.fit_predict(np_ocs).reshape(1,-1)
+            np_ocs = kmeans.fit_predict(np_ocs).reshape(-1,1)
         else: # FD001 and FD003
             np_ocs = None
             ocs_testing = None
@@ -131,7 +130,7 @@ def format_CMAPSS(rectification = 125):
 
         # Get true RUL labels (no need for piece-wise linear)
         file_name = "RUL_"+dataset
-        file_ = path_ + file_name + ".txt"
+        file_ = os.path.join(path_, file_name + ".txt") 
         testing_rul = pd.read_csv(f'{file_}',delimiter = ' ', header=None, usecols=[0]).to_numpy()
         
         # Save the data ## 

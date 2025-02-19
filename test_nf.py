@@ -3,7 +3,7 @@ import torch.nn as nn
 from src.modules.flow_transforms import LatentFlow
 from src.modules import distributions
 from src.ocir import OCIR
-    
+from src.blocks import tcns
 if __name__ == '__main__':
     
     
@@ -21,25 +21,28 @@ if __name__ == '__main__':
         print("")
         return total_param
     
-    args = SimpleNamespace(**{"dz": 16,
-                              "dc": 6,
-                              "dx": 3,
-                              "c_type": "discrete",
+    args = SimpleNamespace(**{"dz": 20,
+                              "dc": 2,
+                              "dx": 14,
+                              "c_type": "continuous",
                               "window": 25,
-                              "d_model": 64,
+                              "d_model": 128,
                               "encoder_E": "transformer",
-                              "z_projection": "rnn",
-                              "D_projection": "rnn",
+                              "z_projection": "spc",
+                              "D_projection": "spc",
                               "c_posterior_param": "soft",
                               "num_heads": 4,
                               "time_embedding": True
                                         })
-    device = torch.device(f'cuda:{5}' if torch.cuda.is_available() else 'cpu')
+    device = torch.device(f'cuda:{6}' if torch.cuda.is_available() else 'cpu')
     print(f"GPU (device: {device}) used" if torch.cuda.is_available() else 'cpu used')
         
-    m = OCIR(args, device)
+    # m = OCIR(dx=args.dx, dz=args.dz, dc=args.dc, window=args.window, 
+    #                     d_model=args.d_model, num_heads=args.num_heads, z_projection=args.z_projection, 
+    #                     D_projection=args.D_projection, time_emb=args.time_embedding, c_type=args.c_type, 
+    #                     c_posterior_param=args.c_posterior_param, encoder_E=args.encoder_E, device=device)
 
-    m.to(device)
+    # m.to(device)
     # print(m)
     # model_size(m, "ocir")
     N = 3
@@ -94,16 +97,32 @@ if __name__ == '__main__':
     
     ''' objective losses'''
     
-    loss_R, R = m.L_R(x, tidx)
-    loss_disc, D = m.L_G_discriminator(x)
-    loss_G, G = m.L_G_generator(x)
+    # loss_R, R = m.L_R(x, tidx)
+    # loss_disc, D = m.L_G_discriminator(x)
+    # loss_G, G = m.L_G_generator(x)
     
-    print(f"loss rec: {R[0]} and loss_KL: {R[1]}")
+    # print(f"loss rec: {R[0]} and loss_KL: {R[1]}")
     
-    print(f"real from D: {D[0]}  and fake from D {D[1]}")
+    # print(f"real from D: {D[0]}  and fake from D {D[1]}")
     
-    print(f"loss gen {G[0]},  loss_q: {G[1]},  loss_ccz: {G[2]},  and lossccc: {G[3]}")
+    # print(f"loss gen {G[0]},  loss_q: {G[1]},  loss_ccz: {G[2]},  and lossccc: {G[3]}")
     
+    
+    '''Test tcn '''
+
+    m = tcns.TCN_net(max_input_length = args.window, # This determins the maximum capacity of sequence length
+                input_size = args.dx,
+                kernel_size = 3,
+                num_filters = args.d_model,
+                num_layers = None,
+                dilation_base = 2,
+                norm= 'weightnorm', # "none1" 
+                nr_params = 1,
+                dropout= 0.1)
+    m.to(device)
+    print(m)
+    y = m(x)
+    print(y.shape)
     # prior_z = distributions.DiagonalGaussian(args.dz, mean = 0, var = 1)
     # prior_c = distributions.UniformDistribution() 
     # prior_c_disc = distributions.DiscreteUniform(args.dc, onehot = True)

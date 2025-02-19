@@ -1,0 +1,128 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Jun 10 20:35:21 2023
+
+@author: mkim332
+"""
+
+import numpy as np
+from scipy.optimize import linear_sum_assignment as linear_assignment  
+from scipy.stats import pearsonr
+
+def clustering_acc(Y_pred, Y, 
+                   title_ = "",
+                   logger = None):
+    # Based on Hungarian algorithm (Assignment problem)
+    '''
+    This is implemented to estimate accuracy of clustering in last sequence only
+    - Assume the labels of prediction and ground-truth are not matching - Mixed
+    
+    Shape of inputs (e.g., argmaxed softmax logits and integer type ground truth labels): (sample size, )
+    '''
+    Y_pred = Y_pred.astype(int)
+    Y = Y.astype(int)
+    Y_pred = Y_pred.reshape(-1)
+    Y = Y.reshape(-1)
+
+    # assert Y_pred.shape == Y.shape, "sizes do not match"
+    # if dataset_ == 'train_FD002' or dataset_ == 'train_FD004':
+
+    # Get a total number of clusters in inputs
+    D = max(Y_pred.max(), Y.max())+1
+    # form a matrix of 6 x 6
+    w = np.zeros((D,D), dtype=np.int64)
+    # matching labels - This is done by scoring of the repeats in sequential labels
+    for i in range(Y_pred.size):
+        w[Y_pred[i], Y[i]] += 1
+    ind = linear_assignment(w.max() - w)
+    acc_ = (sum([w[ind[0][i],ind[1][i]] for i in range (D)])*1.0/Y_pred.size) * 100
+    if logger is None:
+        print_ = print
+    else:
+        print_ = logger.info
+        
+    print_(f"Clustering ACC {title_}: {np.round(acc_,5)}%")
+    
+def clustering_purity(predicted_labels, true_labels):
+    # Count the number of samples in each cluster
+    cluster_counts = {}
+    for pred_label, true_label in zip(predicted_labels, true_labels):
+        if pred_label not in cluster_counts:
+            cluster_counts[pred_label] = {}
+        if true_label not in cluster_counts[pred_label]:
+            cluster_counts[pred_label][true_label] = 0
+        cluster_counts[pred_label][true_label] += 1
+    
+    # Calculate purity
+    total_samples = len(predicted_labels)
+    purity = 0.0
+    for cluster, counts in cluster_counts.items():
+        max_count = max(counts.values())
+        purity += max_count
+    
+    purity /= total_samples
+    return purity
+def MA(x, y, window_ = 3):
+    length_ = x.shape[0]
+    x_ = np.array(x)
+    y_ = np.array(y)
+    
+    x = np.pad(x, (window_//2, window_//2), mode='constant')
+    y = np.pad(y, (window_//2, window_//2), mode='constant')
+    for i in range (window_//2, length_ + (window_//2)):
+        x_[i-window_//2] = x[i-(window_//2):i+(window_//2)].mean()
+        y_[i-window_//2] = y[i-(window_//2):i+(window_//2)].mean()
+    return x_, y_
+
+def forecasting_acc(x_fore, x_target, sta_reg = 25, avg = 3):
+    ''' TODO
+    unnormalized inputs 
+    x_fore and x_true -->(length, feature)   the sequence includes non-forecasted region for which acc is not computed.
+    need to accumulate at where it gets called and take a mean of that
+    '''
+    # # Sample-wise normalization
+    # x_fore = (x_fore - x_fore.mean(0)) / x_fore.std(0)
+    # x_target = (x_target - x_target.mean(0)) / x_target.std(0)
+    # # Calibration with respect to the sequence up to stationarization of target (excluding forecasted regions)
+    # ref = x_target[:sta_reg,:].mean(0)
+    # calib = ref - x_fore[:sta_reg,:].mean(0)
+    # x_fore = x_fore + calib[None,:] # shift by calib 
+    
+    # # Compute acc over forecasted ones
+    # x_fore = x_fore[sta_reg:,:]
+    # x_target = x_target[sta_reg:,:]
+    # Sample-wise normalization
+    x_fore = (x_fore - x_fore.mean(0)) / x_fore.std(0)
+    cali_ = x_fore[:50,:].mean(0)
+    x_fore -= cali_
+    x_fore = x_fore[sta_reg:,:]
+    
+    x_target = (x_target - x_target.mean(0)) / x_target.std(0)
+    cali_ = x_target[:50,:].mean(0)
+    x_target -= cali_
+    x_target = x_target[sta_reg:,:]
+    ## MSE
+    mse_ = np.mean((x_fore - x_target) ** 2)
+    ## MAE
+    mae_ = np.mean(np.abs(x_fore - x_target))
+    ## MAPE
+    mape_ = np.mean(np.abs((x_fore - x_target) / x_target)) #* 100
+    # PCC
+    for ii in range (avg):
+        x_fore, x_target = MA(x_fore, x_target)
+    correlations = [pearsonr(x_fore[:, i], x_target[:, i])[0] for i in range(x_fore.shape[1])]
+    pcc = np.mean(correlations)
+    # Potentially MASE
+    pass    
+    return mse_, mae_, mape_, pcc
+# # Example usage
+# predicted_clusters = np.array([1, 1, 2, 2, 2, 3])
+# true_labels = np.array([1, 1, 2, 2, 3, 3])
+
+# nmi = normalized_mutual_info_score(true_labels, predicted_clusters)
+# ari = adjusted_rand_score(true_labels, predicted_clusters)
+# purity = clustering_purity(predicted_clusters, true_labels)
+
+# print("Normalized Mutual Information (NMI):", nmi)
+# print("Adjusted Rand Index (ARI):", ari)
+# print("Clustering Purity (ACC):", purity)

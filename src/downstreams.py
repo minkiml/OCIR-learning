@@ -18,16 +18,16 @@ class RulEstimator(nn.Module):
         rul = self.regressor(z)
         return rul
     
-class latent_trajectory(nn.Module):
+class LatentTrajectory(nn.Module):
     def __init__(self, args, 
                     pretrained_encoderE,
                  device): 
-        super(latent_trajectory, self).__init__()
+        super(LatentTrajectory, self).__init__()
         
         
         
-class data_trajectory(nn.Module):
+class DataTrajectory(nn.Module):
     def __init__(self, args, 
                     pretrained_encoderE,
                  device): 
-        super(data_trajectory, self).__init__()
+        super(DataTrajectory, self).__init__()

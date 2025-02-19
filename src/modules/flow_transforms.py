@@ -18,28 +18,32 @@ class LatentFlow(nn.Module):
     
     backward h-1() : z -> z'
     '''
-    def __init__(self, args, 
-                 base_distribution = None):
+    def __init__(self, dz, 
+                 base_distribution = None,
+                 nf = "RNVP"): # "MAF" "RNVP"
         super(LatentFlow, self).__init__() 
+        self.num_layers = 12
         # p(z')
         self.base_distribution = base_distribution
         # h0,...,hL 
-        self.normalizing_flow = normalizing_flow.NormalizingFlow("RNVP", dz = args.dz, 
-                                                                 num_layers= 6)
+        self.normalizing_flow = normalizing_flow.NormalizingFlow(nf, dz = dz, 
+                                                                 num_layers= self.num_layers)
         
-    def forward(self, N, mu  = None, log_var = None, z0 = None):
+    def forward(self, N = None, mu  = None, log_var = None, z0 = None):
         if z0 == None:
             z_0 = self.base_distribution.sample(N, mu, log_var)
         else: z_0 = z0
         z, log_det = self.normalizing_flow(z_0) # (N, dz)  , (N, ) 
         return z, log_det, z_0
     
-    def inverse(self, x):
-        # 
-        z0, log_det = self.normalizing_flow.inverse(x) # (N, dz)  , (N, )
-        return z0, log_det 
+    def inverse(self, ZH = None): # (self, N = None, mu  = None, log_var = None, z0 = None):
+        # if z0 == None:
+        #     z_0 = self.base_distribution.sample(N, mu, log_var)
+        # else: z_0 = z0
+        z0, log_det = self.normalizing_flow.inverse(ZH) # (N, dz)  , (N, )
+        return z0, log_det, ZH 
         
-    def sample(self, N):
-        z, _, z0= self.forward(N, mu = None, log_var = None)
-        return z, z0
+    def sample(self, N):        
+        z, logdet, z0= self.forward(N, mu = None, log_var = None)
+        return z, z0,logdet
         

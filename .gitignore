@@ -6,11 +6,10 @@
 Thumbs.db
 *.pkl
 *.vscode
+*cmapss_dataset
 
 # Training logs 
-*Logs_
+*Logs
 
 # Dummy files
-*scripts_exp
-*scripts_abl
 note.txt

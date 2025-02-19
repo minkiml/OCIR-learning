@@ -21,16 +21,15 @@ class CMAPSS_datset(Dataset):
             t = None):
         super(CMAPSS_datset, self).__init__()
 
-        self.X = X # (n, w_T, channel)
+        self.X = X #[:,:,0:1] # (n, w_T, channel)
         self.Y = Y # (n, 1) # TODO check shape 
         self.ocs = ocs # (n, w_T, c)
-        print("t shape",t.shape)
         self.time_idx = t.view(-1,1) # (N, 1)
     def __len__(self):
         return self.X.shape[0] 
     
     def __getitem__(self, index):
-        if self.time_idx:
+        if self.time_idx is not None:
             return self.X[index], self.Y[index], self.ocs[index], self.time_idx[index], 
         else:
             return self.X[index], self.Y[index], self.ocs[index]
@@ -68,13 +67,14 @@ def load_CMAPSS(dataset = "FD001",
                 normalize_rul = True,
                 full_test = False,
                 vis = False,
-                logger = None):
-    
+                logger = None,
+                plot = None):
+    add_continuous = True
     # Load the raw CM data 
     path = os.path.join(data_path, dataset)
     if not os.path.exists(os.path.join(path, 'training_data.pkl')):
         # Get the formatted raw CM data. Download the raw CM data from (... TODO)
-        logger.info("CMAPSS data is being formatted")
+        logger.info("Formatted CMAPSS data does not exist, so being formatted first ...")
         cmapssformater.format_CMAPSS(rectification = rectification) # the path for the downloaded raw cm data need to be speificed inside the function 
     
     with open(os.path.join(path, 'training_data.pkl'), 'rb') as f:
@@ -97,20 +97,20 @@ def load_CMAPSS(dataset = "FD001",
     with open(os.path.join(path, 'testing_rul.pkl'), 'rb') as f:
         testing_rul = pickle.load(f)
         
-    # vis RAW here if necessary TODO
-    if vis:
-        pass
-        # TODO
+    # vis RAW here if necessary
+    if vis and (plot is not None):
+        plot.line_plot(x = training_X, label = "raw", instant = 0, inst = 6)
+
     # Get continous c and apply if the dataset is FD001 OR FD003
     if (dataset == "FD001") or (dataset == "FD003"):
         phi = data_utils.get_phi(training_X)
-        training_X, s_map, training_ocs= data_utils.get_continuous_property(training_X, varying = True, stds_ = phi)        
-        testing_X, _, testing_ocs = data_utils.get_continuous_property(testing_X, varying = True, stds_ = phi, swapping_map = s_map)      
+        training_X, s_map, training_ocs= data_utils.get_continuous_property(training_X, varying = False, stds_ = None, add_cont= add_continuous)        
+        testing_X, _, testing_ocs = data_utils.get_continuous_property(testing_X, varying = False, stds_ = None, swapping_map = s_map, add_cont= add_continuous)      
 
     # VIS original scale raw + c data
-    if vis:
-        pass
-        # TODO
+    if vis and (plot is not None) and ((dataset == "FD001") or (dataset == "FD003")):
+        plot.line_plot(x = training_X, label = "raw_C", instant = 0, inst = 6)
+
     train_p = dict()
     train_p_ocs = dict()
     train_p_rul = dict()
@@ -134,8 +134,8 @@ def load_CMAPSS(dataset = "FD001",
                 
             else:
                 vali_p[len(vali_p) + 1] = training_X[s]
-                vali_p_ocs[len(vali_p) + 1] = training_ocs[s]
-                vali_p_rul[len(vali_p) + 1] = training_rul[s]
+                vali_p_ocs[len(vali_p)] = training_ocs[s]
+                vali_p_rul[len(vali_p)] = training_rul[s]
                 
         # Nomalization 
         normalizer = data_utils.Standardization(train_p, appr_healthy_state = 30)
@@ -148,7 +148,7 @@ def load_CMAPSS(dataset = "FD001",
         vali_sets, _ = data_utils.sliding_window(vali_p, vali_p_ocs, vali_p_rul, T)
         train_p, train_p_ocs, train_p_rul, train_time_idx = data_utils.parse_lr_set(training_sets)
         vali_p, vali_p_ocs, vali_p_rul, vali_time_idx = data_utils.parse_lr_set(vali_sets)
-        
+        # TODO check the size the vali
         # Note that for rul estimation, we do not need full testing data but the last window only. 
         if full_test:
             raise NotImplementedError("")
@@ -170,12 +170,14 @@ def load_CMAPSS(dataset = "FD001",
                     
                 test_p_list.append(test_p[s][None,-T:])
                 test_p_ocs_list.append(testing_ocs[s][None,-T:])
-                test_t_list.append(np.array([test_p[s].shape[0]]).reshape(1,1,-1))
+                test_t_list.append(np.array([test_p[s].shape[0]]).reshape(1,-1))
             test_p = torch.tensor(np.concatenate((test_p_list), axis = 0), dtype = torch.float32)
             testing_ocs = torch.tensor(np.concatenate((test_p_ocs_list), axis = 0), dtype = torch.float32)
-            test_t_list = torch.tensor(np.concatenate((test_t_list), axis = 0), dtype = torch.float32)
+            test_t_list = torch.tensor(np.concatenate((test_t_list), axis = 0), dtype = torch.long)
         testing_rul = torch.tensor(testing_rul, dtype = torch.float32)
         
+
+        # max_value = max(train_time_idx.max(), vali_time_idx.max(), test_t_list.max())
         
         #rul_test = np.clip(rul_test, 0., rectification) # isn't this cheating?
         if normalize_rul:
@@ -197,7 +199,7 @@ def load_CMAPSS(dataset = "FD001",
                                                         ocs = vali_p_ocs,
                                                         t = vali_time_idx),
                                         batch_size = batch_size,
-                                        shuffle = True,
+                                        shuffle = False,
                                         num_workers = 10,
                                         drop_last=True)
         logger.info(f" Testing X: {test_p.shape}, Testing rul: {testing_rul.shape}, Testing ocs: {testing_ocs.shape}, Testing time-index: {test_t_list.shape}")
@@ -210,7 +212,7 @@ def load_CMAPSS(dataset = "FD001",
                                         num_workers = 10,
                                         drop_last=False)
         return training_dataload, vali_dataload, testing_dataload
-    elif (task == "rep_level_trj") or (task == "data_level_trj"):
+    elif (task == "rep_trj") or (task == "data_trj"):
         '''
         No separated testing data is available for quantitative evaluation, so
         Training data in split into training (60%), validation (20%) and testing (20%) for quantitative eval
@@ -231,13 +233,13 @@ def load_CMAPSS(dataset = "FD001",
                 
             elif (total_S * 0.6 < s) and (s <= total_S * 0.8):
                 vali_p[len(vali_p) + 1] = training_X[s]
-                vali_p_ocs[len(vali_p) + 1] = training_ocs[s]
-                vali_p_rul[len(vali_p) + 1] = training_rul[s]
+                vali_p_ocs[len(vali_p)] = training_ocs[s]
+                vali_p_rul[len(vali_p)] = training_rul[s]
             
             else:
                 test_p[len(test_p) + 1] = training_X[s]
-                test_p_ocs[len(test_p) + 1] = training_ocs[s]
-                test_p_rul[len(test_p) + 1] = training_rul[s]
+                test_p_ocs[len(test_p)] = training_ocs[s]
+                test_p_rul[len(test_p)] = training_rul[s]
                 
         # Nomalization 
         normalizer = data_utils.Standardization(train_p, appr_healthy_state = 30)
@@ -248,20 +250,20 @@ def load_CMAPSS(dataset = "FD001",
         # Sliding window (TODO)
         train_lr_set, train_trj_set = data_utils.sliding_window(train_p, train_p_ocs, train_p_rul, T,
                                                                                     H = H, H_lookback = H_lookback, 
-                                                                                    trajectory = "feature" if task == "rep_level_trj" else "data") # (total num of windowed samples, w_T, c), ..., ... # TODO check rul in sw
+                                                                                    trajectory = "feature" if task == "rep_trj" else "data") # (total num of windowed samples, w_T, c), ..., ... # TODO check rul in sw
         
         train_p, train_p_ocs, train_p_rul, train_time_idx = data_utils.parse_lr_set(train_lr_set)
         (train_lookback_p, train_lookback_p_ocs, train_lookback_p_tidx), (train_horizon_p, train_horizon_p_ocs) = data_utils.parse_trj_set(train_trj_set)
         
         vali_lr_set, vali_trj_set = data_utils.sliding_window(vali_p, vali_p_ocs, vali_p_rul, T,
                                                                                 H = H, H_lookback = H_lookback, 
-                                                                                trajectory = "feature" if task == "rep_level_trj" else "data") # (total num of windowed samples, w_T, c), ..., ...
+                                                                                trajectory = "feature" if task == "rep_trj" else "data") # (total num of windowed samples, w_T, c), ..., ...
         vali_p, vali_p_ocs, vali_p_rul, vali_time_idx = data_utils.parse_lr_set(vali_lr_set)
         (vali_lookback_p, vali_lookback_p_ocs, vali_lookback_p_tidx), (vali_horizon_p, vali_horizon_p_ocs) = data_utils.parse_trj_set(vali_trj_set)
 
         test_lr_set, test_trj_set = data_utils.sliding_window(test_p, test_p_ocs, test_p_rul, T,
                                                                                     H = H, H_lookback = H_lookback, 
-                                                                                    trajectory = "feature" if task == "rep_level_trj" else "data") # (total num of windowed samples, w_T, c), ..., ...
+                                                                                    trajectory = "feature" if task == "rep_trj" else "data") # (total num of windowed samples, w_T, c), ..., ...
         test_p, test_p_ocs, test_p_rul, test_time_idx = data_utils.parse_lr_set(test_lr_set)
         (test_lookback_p, test_lookback_p_ocs, test_lookback_p_tidx), (test_horizon_p, test_horizon_p_ocs) = data_utils.parse_trj_set(test_trj_set)
         # test_p, test_p_ocs, test_p_rul, test_time_idx

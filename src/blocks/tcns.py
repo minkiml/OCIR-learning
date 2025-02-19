@@ -152,7 +152,6 @@ class TCN_net(nn.Module):
         input_size: int,
         kernel_size: int,
         num_filters: int,
-        target_size: int,
 
         num_layers: Optional[int] = None,
         dilation_base: int = 2,
@@ -166,8 +165,6 @@ class TCN_net(nn.Module):
         ----------
         input_size
             The dimensionality of the input time series.
-        target_size
-            The dimensionality of the output time series.
         nr_params
             The number of parameters of the likelihood (or 1 if no likelihood is used).
         kernel_size
@@ -203,7 +200,6 @@ class TCN_net(nn.Module):
         self.input_size = input_size
         self.n_filters = num_filters
         self.kernel_size = kernel_size
-        self.target_size = target_size
         self.nr_params = 1
         self.dilation_base = dilation_base
         self.dropout = nn.Dropout(p=dropout)
@@ -239,8 +235,7 @@ class TCN_net(nn.Module):
                 i,
                 num_layers,
                 self.input_size,
-                num_filters * nr_params,
-                leng_ = self.input_chunk_length
+                num_filters * nr_params
             )
             self.res_blocks_list.append(res_block)
 
@@ -298,3 +293,18 @@ class TCN_net(nn.Module):
 # xx = torch.rand(20,100,3)
 
 # yy = aa(xx)
+
+
+
+
+# TransformerDecoder = [bs.TCN_net(max_input_length = window, # This determins the maximum capacity of sequence length
+#                                     input_size = d_model,
+#                                     kernel_size = 3,
+#                                     num_filters = d_model,
+#                                     num_layers = None,
+#                                     dilation_base = 2,
+#                                     norm= 'weightnorm', # "none1" 
+#                                     nr_params = 1,
+#                                     dropout= 0.1) for _ in range(self.depth)]
+# self.TransformerDecoder = nn.ModuleList(TransformerDecoder)
+

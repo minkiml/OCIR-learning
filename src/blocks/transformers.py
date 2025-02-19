@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 
+from src.blocks import tcns
 from src.blocks import src_utils
 class SinCosPositionalEncoding(nn.Module):
     def __init__(self, embed_dim, max_len=5000):
@@ -32,8 +33,8 @@ class MultiHeadSelfAttention(nn.Module):
         self.head_dim = embed_dim // num_heads
         self.scale = self.head_dim ** -0.5
 
-        self.qkv_proj = src_utils.Linear(embed_dim, embed_dim * 3)
-        self.out_proj = src_utils.Linear(embed_dim, embed_dim)
+        self.qkv_proj = nn.Linear(embed_dim, embed_dim * 3)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None):
@@ -54,12 +55,12 @@ class MultiHeadSelfAttention(nn.Module):
 class FeedForwardNetwork(nn.Module):
     def __init__(self, embed_dim, hidden_dim, dropout=0.1):
         super().__init__()
-        self.fc1 = src_utils.Linear(embed_dim, hidden_dim )
-        self.fc2 = src_utils.Linear(hidden_dim, embed_dim )
+        self.fc1 = nn.Linear(embed_dim, hidden_dim )
+        self.fc2 = nn.Linear(hidden_dim, embed_dim )
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        return self.fc2(self.dropout(F.gelu(self.fc1(x))))
+        return self.fc2(self.dropout(F.leaky_relu_(self.fc1(x))))
 
 class TransformerEncoderBlock(nn.Module):
     def __init__(self, embed_dim, num_heads, ff_hidden_dim, dropout=0.1, prenorm=True):
@@ -96,6 +97,16 @@ class Aggregation(nn.Module):
         elif self.method == 'weighted':
             attn_scores = torch.softmax(self.attn_weights(hidden_states), dim=1)  # Compute weights
             return torch.sum(attn_scores * hidden_states, dim=1)  # Weighted sum
+
+class Aggregation_all(nn.Module):
+    # TODO check this 
+    def __init__(self, d_model, window):
+        super().__init__()
+        self.aggregation_layer = nn.Linear(d_model * window, d_model)
+    def forward(self, z):
+        N, L, d = z.shape
+        z = torch.flatten(z,1, -1)
+        return self.aggregation_layer(z)
         
 class Conv1by1(nn.Module):
     # TODO check this 
@@ -112,3 +123,107 @@ class Conv1by1(nn.Module):
         # x (N, L, c)
         x = x.permute(0,2,1)
         return self.conv(x).permute(0,2,1)
+
+class shared_transformer(nn.Module):
+    def __init__(self,dx:int, d_model:int, window:int, num_heads:int,
+                 D_projection:str):
+        super(shared_transformer, self).__init__()
+        self.num_heads = num_heads
+        self.depth = 1
+        self.D_projection = D_projection
+        self.pos_enc = SinCosPositionalEncoding(d_model, window + 1)
+        self.fE_projection = Conv1by1(dx, d_model)
+        transformer_encoder = [TransformerEncoderBlock(embed_dim = d_model, num_heads = self.num_heads,
+                                                                    ff_hidden_dim = int(d_model * 3), dropout = 0.15,
+                                                                    prenorm = False) for _ in range(self.depth)]
+        self.transformer_encoder = nn.ModuleList(transformer_encoder)
+        
+        
+        if D_projection == "spc":
+            # BERT-style special token (compressive token) is done as discriminative score for sequence
+            self.score_token = nn.Parameter(torch.randn(1,1,d_model) * 0.02)
+            
+    def forward(self, x):
+        N = x.shape[0]
+        x_emb = x
+        x_emb = self.fE_projection(x_emb)
+        if (self.D_projection == "spc"):
+            score_token = self.score_token.expand(N,-1,-1)
+            x_emb = torch.cat((score_token, x_emb), dim = 1)    
+                        
+        # positional encoding
+        x_emb = self.pos_enc(x_emb)
+        for layer in self.transformer_encoder:
+            x_emb = layer(x_emb)
+        return x_emb
+
+class SharedEncoder(nn.Module):
+    def __init__(self, dx:int, dz:int, window:int, d_model:int, num_heads:int,
+                 z_projection:str, time_emb:bool,
+                 ):
+        super(SharedEncoder, self).__init__()
+        self.z_projection = z_projection
+        self.num_heads = num_heads
+        self.depth = 2
+        self.time_emb = time_emb
+        
+        
+        if self.time_emb:
+            self.time_embedding = nn.Embedding(num_embeddings= 550, embedding_dim = d_model)
+            # src_utils.init_embedding(self.time_embedding)
+        self.pos_enc = SinCosPositionalEncoding(d_model, window + 2)
+        self.fE_projection = src_utils.Linear(dx, d_model) #transformers.Conv1by1(dx, d_model)
+        
+        
+        TransformerEncoder = [TransformerEncoderBlock(embed_dim = d_model, num_heads = self.num_heads,
+                                                        ff_hidden_dim = int(d_model * 3), dropout = 0.15,
+                                                        prenorm =True) for _ in range(self.depth)]
+        self.TransformerEncoder = nn.ModuleList(TransformerEncoder)
+        
+        # TransformerEncoder = [tcns.TCN_net(max_input_length = window, # This determins the maximum capacity of sequence length
+        #                                     input_size = d_model,
+        #                                     kernel_size = 3,
+        #                                     num_filters = d_model,
+        #                                     num_layers = None,
+        #                                     dilation_base = 2,
+        #                                     norm= 'weightnorm', # "none1" 
+        #                                     nr_params = 1,
+        #                                     dropout= 0.1) for _ in range(self.depth)]
+        # self.TransformerEncoder = nn.ModuleList(TransformerEncoder)
+
+        
+        
+        if z_projection == "spc":
+            # BERT-style special token (compressive token) is done as discriminative score for sequence
+            self.compressive_token = nn.Parameter(torch.randn(1,1,d_model))
+        elif z_projection == "seq":
+                self.compressive_token = nn.Parameter(torch.randn(1,1,d_model))
+                self.projection_zin = src_utils.Linear(d_model, dz )
+    def forward(self, x, tidx = None):
+        N, L, _ = x.shape
+        x_proj = self.fE_projection(x)
+        # Time index embeddings
+        if self.time_emb:
+            if tidx is not None: 
+                time_token = self.time_embedding(tidx) # (N, 1, d_model)
+                # print(time_token.device)
+            else:
+                # For generator-to-encoder inference the time index is not known, so time index 0 is assigned as a unknown time. 
+                time_token = self.time_embedding(torch.zeros((N,1), dtype=torch.long).to(x.device)) # zero token
+            x_emb = torch.cat((x_proj,time_token), dim = 1)
+        else: x_emb = x_proj
+        # add apc as a compressive token
+        if self.z_projection == "spc" or (self.z_projection == "seq"):
+            compressive_token = self.compressive_token.expand(N,-1,-1) # TODO repeat?
+            # compressive_token = self.compressive_token.repeat(N,1,1) # TODO repeat?
+
+            x_emb = torch.cat((compressive_token, x_emb), dim = 1)  
+                    
+        # positional encoding
+        x_emb = self.pos_enc(x_emb)
+        
+        # transformer
+        for layer in self.TransformerEncoder:
+            x_emb = layer(x_emb)
+            
+        return x_emb

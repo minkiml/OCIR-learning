@@ -8,122 +8,213 @@ import torch.nn.functional as F
 import torch
 import torch.nn as nn
 
-from src.blocks import transformers, src_utils 
+from src.blocks import transformers, src_utils,tcns
 from src.modules import distributions
-
 class LatentEncoder(nn.Module):
-    def __init__(self, args,
-                 p_h
+    def __init__(self, dx:int, dz:int, window:int, 
+                 d_model:int, num_heads:int, z_projection:str, time_emb:bool,
+                 encoder_E:str, p_h, shared_EC = False
                  ): 
         super(LatentEncoder, self).__init__() 
         
-        self.z_projection = args.z_projection
-        self.num_heads = args.num_heads
+        self.z_projection = z_projection
+        self.num_heads = num_heads
         self.depth = 2
-        self.time_emb = args.time_embedding
-        if args.encoder_E == "transformer":
-            # Suppose the longest length of cm data could be 520
-            if self.time_emb:
-                self.time_embedding = nn.Embedding(num_embeddings= args.window, embedding_dim = args.d_model)
-                src_utils.init_embedding(self.time_embedding)
-            self.pos_enc = transformers.SinCosPositionalEncoding(args.d_model, args.window + 2)
-            self.fE_projection = transformers.Conv1by1(args.dx, args.d_model)
-            
-            # (N, L, C) -> (N, C)
-            if args.z_projection == "aggregation":
-                self.latent_aggregation = transformers.Aggregation(args.d_model, method = 'weighted')
-                
-            elif args.z_projection == "spc":
-                # otherwise, a BERT-style special token (namely compressive token) is done 
-                self.compressive_token = nn.Parameter(torch.randn(1,1,args.d_model) * 0.02)
-                
-            elif args.z_projection == "rnn":
-                self.latent_aggregation = src_utils.rnn_aggregation(args.d_model, args.d_model)
-
-
-            TransformerEncoder = [transformers.TransformerEncoderBlock(embed_dim = args.d_model, num_heads = self.num_heads,
-                                                                       ff_hidden_dim = int(args.d_model * 3), dropout = 0.15,
-                                                                       prenorm = True) for _ in range(self.depth)]
-            self.TransformerEncoder = nn.ModuleList(TransformerEncoder)
+        self.time_emb = time_emb
+        self.shared_EC = shared_EC
         
-        # mu and logvar
-        self.mu_logvar = src_utils.Linear(args.d_model, args.dz * 2)
-        # z' ~ N(mu, sigma) -> p_h(z)
+        if encoder_E == "transformer":
+            if not self.shared_EC:
+                # Suppose the longest length of cm data could be 520
+                if self.time_emb:
+                    self.time_embedding = nn.Embedding(num_embeddings= 550, embedding_dim = d_model)
+                    # src_utils.init_embedding(self.time_embedding)
+                self.pos_enc = transformers.SinCosPositionalEncoding(d_model, window + 2)
+                self.fE_projection = src_utils.Linear(dx, d_model) #transformers.Conv1by1(dx, d_model)
+                
+                # TransformerEncoder = [tcns.TCN_net(max_input_length = window, # This determins the maximum capacity of sequence length
+                #             input_size = d_model,
+                #             kernel_size = 3,
+                #             num_filters = d_model,
+                #             num_layers = None,
+                #             dilation_base = 2,
+                #             norm= 'weightnorm', # "none1" 
+                #             nr_params = 1,
+                #             dropout= 0.1) for _ in range(self.depth)]
+                # self.TransformerEncoder = nn.ModuleList(TransformerEncoder)
+
+                TransformerEncoder = [transformers.TransformerEncoderBlock(embed_dim = d_model, num_heads = self.num_heads,
+                                                                ff_hidden_dim = int(d_model * 3), dropout = 0.15,
+                                                                prenorm =True) for _ in range(self.depth)]
+                self.TransformerEncoder = nn.ModuleList(TransformerEncoder)
+            else:
+                pass
+            # (N, L, C) -> (N, C)
+            if z_projection == "aggregation":
+                self.latent_aggregation = transformers.Aggregation(d_model, method = 'weighted')
+                
+            elif (z_projection == "spc") and (not self.shared_EC):
+                # otherwise, a BERT-style special token (namely compressive token) is done 
+                self.compressive_token = nn.Parameter(torch.randn(1,1,d_model))
+                
+            elif z_projection == "rnn":
+                self.latent_aggregation = src_utils.rnn_aggregation(d_model, d_model)
+            elif z_projection == "seq" and (not self.shared_EC):
+                self.compressive_token = nn.Parameter(torch.randn(1,1,d_model))
+                self.projection_zin = src_utils.Linear(d_model, dz )
+            elif z_projection == "aggregation_all":
+                self.latent_aggregation = transformers.Aggregation_all(d_model, window + 1 if self.time_emb else window)
+                
+        if p_h is None:
+            self.mu = src_utils.Linear(d_model, dz , bias=False)
+        else:
+            self.mu = src_utils.Linear(d_model, dz , bias=False)
+            self.logvar = src_utils.Linear(d_model, dz , bias=False)
+
         self.p_h = p_h
     def forward(self, x, tidx = None):
-        N, L, c = x.shape
-        x_proj = self.fE_projection(x)
-        
-        # Time index embeddings
-        if self.time_emb:
-            if tidx is not None: 
-                time_token = self.time_embedding(tidx) # (N, 1, d_model)
-            else:
-                # For generator-to-encoder inference the time index is not known, so time index 0 is assigned as a unknown time. 
-                time_token = self.time_embedding(torch.zeros((N,1), dtype=torch.long).to(x.device))
-            x_emb = torch.cat((x_proj,time_token), dim = 1)
-        else: x_emb = x_proj
-        # add apc as a compressive token
-        if self.z_projection == "spc":
-            compressive_token = self.compressive_token.expand(N,-1,-1)
-            x_emb = torch.cat((compressive_token, x_proj), dim = 1)            
+        N, L, _ = x.shape
+        if not self.shared_EC:
+            x_proj = self.fE_projection(x)
             
-        # positional encoding
-        x_emb = self.pos_enc(x_emb)
-        for layer in self.TransformerEncoder:
-            x_emb = layer(x_emb)
-        
+            # Time index embeddings
+            if self.time_emb:
+                if tidx is not None: 
+                    time_token = self.time_embedding(tidx) # (N, 1, d_model)
+                    # print(time_token.device)
+                else:
+                    # For generator-to-encoder inference the time index is not known, so time index 0 is assigned as a unknown time. 
+                    time_token = self.time_embedding(torch.zeros((N,1), dtype=torch.long).to(x.device)) # zero token
+                x_emb = torch.cat((x_proj,time_token), dim = 1)
+            else: x_emb = x_proj
+            # add apc as a compressive token
+            if self.z_projection == "spc" or (self.z_projection == "seq"):
+                compressive_token = self.compressive_token.expand(N,-1,-1) # TODO repeat?
+                # compressive_token = self.compressive_token.repeat(N,1,1) # TODO repeat?
+
+                x_emb = torch.cat((compressive_token, x_emb), dim = 1)  
+                        
+            # positional encoding
+            x_emb = self.pos_enc(x_emb)
+            
+            # transformer
+            for layer in self.TransformerEncoder:
+                x_emb = layer(x_emb)
+                
+        else:
+            x_emb = x
+            
         if self.z_projection == "spc":
             z = x_emb[:,0,:] # (N, d_modle)
+            z_in = None
+        elif self.z_projection == "seq":
+            pass
+            z = x_emb[:,0,:] # (N, d_modle)
+            z_in = x_emb[:,1:,:] if not self.time_emb else x_emb[:,1:-1,:] # (N, L, d_modle)
+            assert z_in.shape[1] == L
+            z_in = self.projection_zin(z_in)
         else:
             z = self.latent_aggregation(x_emb) # (N, d_modle)
-        mu_logvar = self.mu_logvar(z)
-        mu, log_var = torch.chunk(mu_logvar, 2, dim=-1)
-        return mu, log_var
+            z_in = None
+
+        # print(z[0:2])
+        if self.p_h is None:
+            mu = self.mu(z)
+            log_var = None
+        else:
+            mu = self.mu(z)
+            log_var = self.logvar(z)
+
+            # mu = torch.clamp(mu, min=-1., max=1.)
+            # log_var = torch.clamp(log_var, min=-10, max=0.1)
+        # print(mu)
+        # print("mu: ", mu[0:2,:])
+        # print("log_var: ", log_var[0:2,:])
+        return mu, log_var, z_in
     
     def reparameterization_NF(self, mu, log_var):
+        # Stochastic
         # reparameterization trick with flow transform
-        z, logdet, z0 = self.p_h(log_var, mu, log_var)
+        if isinstance(self.p_h, distributions.DiagonalGaussian):
+            z = self.p_h.sample(log_var, mu, log_var)
+            logdet, z0 = None, None
+        else:
+            z, logdet, z0 = self.p_h(log_var, mu, log_var)
         return z, logdet, z0
     
-    def encoding(self, x, tidx):
-        mu, logvar = self.forward(x, tidx)
-        z, _, _ = self.reparameterization_NF(mu, logvar)
-        return z
-    
+    # TODO get rid of zin thingy everywhere
+    def encoding(self, x, tidx, zin = False):
+        # Deterministic inference
+        
+        mu, logvar, z_in = self.forward(x, tidx)
+        if not zin: 
+            if isinstance(self.p_h, distributions.DiagonalGaussian):
+                return mu
+            else:
+                z, _, z0 = self.p_h(z0 = mu)
+                return z
+        else:
+            if isinstance(self.p_h, distributions.DiagonalGaussian):
+                return mu, z_in
+            else:
+                z, _, z0 = self.p_h(z0 = mu)
+                return z, z_in
+    def timeembedding(self, tidx):
+        if self.time_emb:
+            time_token = self.time_embedding(tidx)
+            return time_token 
+        else:
+            return None
 class CodeEncoder(nn.Module):
-    def __init__(self, args): 
+    def __init__(self, dx:int, dc:int,
+                 d_model:int, c_type:str, c_posterior_param:str,
+                 shared_EC = False
+                 ): 
         super(CodeEncoder, self).__init__() 
-        self.dx = args.dx
-        self.d_model_c = args.d_model
+        self.dx = dx
+        self.d_model_c = d_model
         self.depth = 2
-        self.dc = args.dc
-        self.c_type = args.c_type
-        self.c_posterior_param = args.c_posterior_param
+        self.dc = dc
+        self.c_type = c_type
+        self.shared_EC = shared_EC
+        # Fix this to "hard fitting" for one-to-one cycle-consistency 
+        self.c_posterior_param = "hard" #c_posterior_param
         
-        mlp_encoder = [self.make_MLP() for _ in range(self.depth)]
-        self.mlp_encoder = nn.ModuleList(mlp_encoder)
+        if not self.shared_EC:
+            # code_encoder = [self.make_MLP() for _ in range(self.depth)]
+            # self.code_encoder = nn.ModuleList(code_encoder)
+            # self.fC_projection = transformers.Conv1by1(self.dx, self.d_model_c)
             
-        self.fC_projection = transformers.Conv1by1(self.dx, self.d_model_c)
-        
-        if args.c_type == "discrete":
-            self.classifier = src_utils.Linear(self.d_model_c,self.dc)
+            self.fC_projection = src_utils.Linear(dx, d_model) #transformers.Conv1by1(dx, d_model)
+            
+            code_encoder = [transformers.TransformerEncoderBlock(embed_dim = d_model, num_heads = 4,
+                                                            ff_hidden_dim = int(d_model * 3), dropout = 0.15,
+                                                            prenorm =True) for _ in range(self.depth)]
+            self.code_encoder = nn.ModuleList(code_encoder)
+        else:
+            self.code_encoder = self.make_MLP()
+            
+        if c_type == "discrete":
+            self.classifier = src_utils.Linear(self.d_model_c,self.dc, bias=False)
             self.softmax = nn.Softmax(-1)
-        elif args.c_type == "continuous":
+        elif c_type == "continuous":
             # soft fitting
-            if args.c_posterior_param == "soft":
-                self.code_mu_logvar = src_utils.Linear(self.d_model_c, self.dc * 2)
+            if self.c_posterior_param == "soft":
+                self.code_mu_logvar = src_utils.Linear(self.d_model_c, self.dc * 2, bias=False)
             # hard fitting
             else: 
-                self.code_mu = src_utils.Linear(self.d_model_c,self.dc)
+                self.code_mu = src_utils.Linear(self.d_model_c,self.dc, bias=False)
 
     def forward(self, x):
-        code_emb = self.fC_projection(x)
         N, L, c = x.shape
-        x = x.view(-1, c)
-        
-        for layer in self.mlp_encoder:
-            code_emb = layer(code_emb)
+        if not self.shared_EC:
+            code_emb = self.fC_projection(x)
+            
+            for layer in self.code_encoder:
+                code_emb = layer(code_emb)
+        else:
+            code_emb = self.code_encoder(x)
+            
             
         if self.c_type == "discrete":
             logit = self.classifier(code_emb)
@@ -132,19 +223,23 @@ class CodeEncoder(nn.Module):
             if self.c_posterior_param == "soft":
                 code_emb = self.code_mu_logvar(code_emb)
                 mu, log_var = torch.chunk(code_emb, 2, dim=-1)
+                mu = torch.clamp(mu, min=-1.5, max=1.5)
+                log_var = torch.clamp(log_var, min=-4, max=0) # TODO not limit?
                 return mu.view(N,L,self.dc), log_var.view(N,L,self.dc)
+            
             else:
                 mu = self.code_mu(code_emb)
+                mu = torch.clamp(mu, min=-1.5, max=1.5)
                 return mu.view(N,L,self.dc), None
-    
-    def inference(self, x):
-        c, _ = self.forward(x)
+        
+    def inference(self, x, logits = False):
+        c, c_log_var = self.forward(x)
         if self.c_type == "discrete":
-            return torch.argmax(self.softmax(c),dim = -1, keepdim=True) #  
+            return torch.argmax(self.softmax(c),dim = -1, keepdim=True) if not logits else c #  
         else:
             return c
     def make_MLP(self):
-        mlp = nn.Sequential(src_utils.Linear(self.d_model_c, self.d_model_c * 3),
+        mlp = nn.Sequential(src_utils.Linear(self.d_model_c, self.d_model_c),
                             nn.LeakyReLU(0.2),
-                            src_utils.Linear(self.d_model_c * 3, self.d_model_c))
+                            src_utils.Linear(self.d_model_c, self.d_model_c))
         return mlp 

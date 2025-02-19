@@ -3,6 +3,7 @@ import math
 import torch.nn as nn
 from torch.optim.optimizer import Optimizer
 from src.blocks import src_utils, normalizing_flow
+from src.modules import discriminator_Q
 def opt_constructor(scheduler,
         models, # list of parametric layers, modules, network model, etc.
         lr,
@@ -18,25 +19,38 @@ def opt_constructor(scheduler,
         optimizer = "adam",
         wd_adam = None,
         
-        logger = None
+        logger = None,
+        exclude_sharedlayer = False
         ):
+    
     if not scheduler:
         lr = lr
         param_groups = []
-        for model in models:
-            model_param_groups = [
-                {
-                    'params': (p for n, p in model.named_parameters() if ('bias' not in n)),
-                    'lr': lr
-                },
-                {
-                    'params': (p for n, p in model.named_parameters() if ('bias' in n)),
-                    'lr': lr
-                }
-            ]
-    
-            param_groups.extend(model_param_groups)
+        seen_params = set()
         
+        
+        for model in models:
+            if model is None:
+                continue
+            if isinstance(model, discriminator_Q.CodePosterior):
+                for n, p in model.named_parameters():
+                    if "shared_layer" in n:
+                        seen_params.add(id(p)) 
+                        
+            non_bias_params = [p for n, p in model.named_parameters() if ('bias' not in n) and id(p) not in seen_params]
+            bias_params = [p for n, p in model.named_parameters() if ('bias' in n) and id(p) not in seen_params]
+            
+            model_param_groups = []
+            if non_bias_params:  # Only add non-empty groups
+                model_param_groups.append({'params': non_bias_params, 'lr': lr, 'model_name': type(model).__name__+ "_weights"})
+            if bias_params:
+                model_param_groups.append({'params': bias_params, 'lr': lr, 'model_name': type(model).__name__ + "_bias"})
+                
+            # Track already added parameters using id()
+            seen_params.update(id(p) for p in non_bias_params + bias_params)
+
+            param_groups.extend(model_param_groups)    
+            
         opt = {'adam': torch.optim.AdamW(param_groups, weight_decay= wd_adam if wd_adam is not None else 0.),
                'sgd': torch.optim.SGD(param_groups, momentum=0.90, weight_decay=wd_adam if wd_adam is not None else 0.),
                'lion': Lion(param_groups)
@@ -46,39 +60,52 @@ def opt_constructor(scheduler,
         return opt, None, None
 
     else:
-        # No weight decays to learnable tokens
-        excluded_names = {"compressive_token", "score_token", "seqtoken"} 
-        
-        # No weight decays to layernorm, embbeding module
+        # No weight decays to layernorm, embbeding modules, and etc.
         def is_excluded(n, p, model):
             """ Helper function to determine if a parameter should be excluded from weight decay. """
-            if 'bias' in n:
+            # No weight decays to learnable tokens
+            excluded_names = {"compressive_token", "score_token", "seqtoken", "bias", "scaling_factor"} 
+            if any(vars in n for vars in excluded_names):
                 return True
             if isinstance(model, (nn.LayerNorm, nn.Embedding, 
-                                  src_utils.LayerNorm, normalizing_flow.st_block)):
+                                    src_utils.LayerNorm, normalizing_flow.st_block)):
                 return True
             return False
-        
         param_groups = []
+        seen_params = set()
         for model in models:
+            if model is None:
+                continue
             decay_params = []
             no_decay_params = []
+            
             for n, p in model.named_parameters():
+                if p in seen_params:  # Prevent duplicate inclusion (e.g., shared layers)
+                    continue
+                if isinstance(model, discriminator_Q.CodePosterior):
+                    if "shared_layer" in n: # The layers shared between Discriminator and Q net do not get optimized wrt Generator's loss
+                        continue
                 if is_excluded(n, p, model):
-                    print(n)
                     no_decay_params.append(p)
                 else:
                     decay_params.append(p)
-            param_groups.append({"params": decay_params, 
-                                 "lr": start_lr,
-                                 "weight_decay": start_wd if start_wd is not None else 0., 
-                                 'WD_exclude': False})
-            
-            param_groups.append({"params": no_decay_params, 
-                                 "lr": start_lr,
-                                 "weight_decay": 0.0, 
-                                 'WD_exclude': True})
-            
+                seen_params.add(p)
+
+            if decay_params:
+                param_groups.append({"params": decay_params, 
+                                    "lr": start_lr,
+                                    "weight_decay": start_wd if start_wd is not None else 0., 
+                                    "WD_exclude": False,
+                                    "model_name": type(model).__name__})
+                # logger.info(f"@@@@@@@@@@@@@@@@ {param_groups if param_groups is not None else 1}")
+            if no_decay_params:
+                param_groups.append({"params": no_decay_params, 
+                                    "lr": start_lr,
+                                    "weight_decay": 0.0, 
+                                    "WD_exclude": True,
+                                    "model_name": type(model).__name__})
+                # logger.info(f"222222222222222222222222 {param_groups}")
+
         opt = {'adam': torch.optim.AdamW(param_groups),
                'sgd': torch.optim.SGD(param_groups, momentum=0.90),
                'lion': Lion(param_groups)
