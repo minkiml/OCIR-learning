@@ -17,7 +17,12 @@ class InfoGANPipeline(solver_base.Solver):
         self.build_model()
     def __call__(self, validation = True):
         self.validation = validation
-        self.train()
+        if self.required_training:
+            self.train()
+        else:
+            self.vali("validation")
+        self.infogan.train(False)
+        return self.infogan
     
     def train(self):
         self.logger.info("======================TRAINING BEGINS======================")
@@ -69,11 +74,19 @@ class InfoGANPipeline(solver_base.Solver):
                 loss_G, G = self.infogan.Loss_Generator(x, epoch = epoch+1)
                 opt_G[0].zero_grad()
                 loss_G.backward()
-                # for name, param in self.infogan.G.latent_decoder.named_parameters():
-                #     if param.grad is not None:
-                #         print(f"Q: Epoch {epoch}, {name} grad norm: {param.grad.norm().item()}")
-                #     else:
-                #         print("Q: None")
+                if self.infogan.shared_net is not None:
+                    ut.zeroout_gradient([self.infogan.shared_net])
+                ii = 0
+                # for name, param in (self.infogan.G.h.named_parameters()):
+                #     if "weight" in name:
+                #         print(f"Q: Epoch {epoch}, {name} grad norm: {param.data}")
+                #         ii += 1
+                #         if ii == 2:
+                #             break;
+                    # if param.grad is not None:
+                    #     print(f"Q: Epoch {epoch}, {name} grad norm: {param.grad.norm().item()}")
+                    # else:
+                    #     print("Q: None")
                 for m in reversed(opt_G):
                     if m: m.step()
 
@@ -119,29 +132,30 @@ class InfoGANPipeline(solver_base.Solver):
         ALL_CGT = []
         
         ALL_tidx = []
-        for i, (x,_, ocs, tidx) in enumerate(self.val_data): 
-            x = x.to(self.device)
-            tidx = tidx.to(self.device)
+        with torch.no_grad():
+            for i, (x,_, ocs, tidx) in enumerate(self.val_data): 
+                x = x.to(self.device)
+                tidx = tidx.to(self.device)
 
-            # Generation
-            X_gen, set_latent_samples, _ = self.infogan.G.generation(x.shape[0]) # TODO vis the output generation
-            q_code_mu = self.infogan.Q.inference(X_gen, logits = True)
-            
-            z_h, prior_z, prior_c, prior_c_logit = set_latent_samples
+                # Generation
+                X_gen, set_latent_samples, _ = self.infogan.G.generation(x.shape[0]) # TODO vis the output generation
+                q_code_mu = self.infogan.Q.inference(X_gen, logits = True)
+                
+                z_h, prior_z, prior_c, prior_c_logit = set_latent_samples
 
-            if prior_z == None:
-                ALL_Z.append(z_h)
-                # ALL_ZH.append(z_h)
-                ALL_ZH = None
-            else:
-                ALL_ZH.append(z_h)
-                ALL_Z.append(prior_z)
-            ALL_C.append(prior_c_logit if prior_c_logit is not None else prior_c)
-            ALL_Q.append(q_code_mu)
-            ALL_CGT.append(ocs)
-            
-            ALL_tidx.append(tidx)
-            
+                if prior_z == None:
+                    ALL_Z.append(z_h)
+                    # ALL_ZH.append(z_h)
+                    ALL_ZH = None
+                else:
+                    ALL_ZH.append(z_h)
+                    ALL_Z.append(prior_z)
+                ALL_C.append(prior_c_logit if prior_c_logit is not None else prior_c)
+                ALL_Q.append(q_code_mu)
+                ALL_CGT.append(ocs)
+                
+                ALL_tidx.append(tidx)
+                
         self.evaluation.recon_plot(x[0,:,:], X_gen[0,:,:], label = ["true", "gen"], epoch = str(epoch))
         
         # Memory intensive if the total sample size is large
@@ -182,8 +196,8 @@ class InfoGANPipeline(solver_base.Solver):
                         D_projection=self.D_projection, time_emb=self.time_embedding, c_type=self.c_type, 
                         c_posterior_param=self.c_posterior_param, encoder_E=self.encoder_E, device=self.device)
         
-        print_model(infogan, "InfoGAN")
-        self.infogan = ut.load_model(infogan, self.model_save_path, "InfoGAN")
+        print_model(infogan, "infogan")
+        self.infogan, self.required_training = ut.load_model(infogan, self.model_save_path, "infogan")
         self.infogan.to(self.device)
         
     def get_optimizers(self):

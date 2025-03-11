@@ -6,6 +6,7 @@ Created on Sat Jun 10 20:35:21 2023
 """
 
 import numpy as np
+import torch
 from scipy.optimize import linear_sum_assignment as linear_assignment  
 from scipy.stats import pearsonr
 
@@ -46,12 +47,12 @@ def clustering_acc(Y_pred, Y,
 def clustering_purity(predicted_labels, true_labels):
     # Count the number of samples in each cluster
     cluster_counts = {}
-    for pred_label, true_label in zip(predicted_labels, true_labels):
-        if pred_label not in cluster_counts:
-            cluster_counts[pred_label] = {}
-        if true_label not in cluster_counts[pred_label]:
-            cluster_counts[pred_label][true_label] = 0
-        cluster_counts[pred_label][true_label] += 1
+    for predlabel, true_label in zip(predicted_labels, true_labels):
+        if predlabel not in cluster_counts:
+            cluster_counts[predlabel] = {}
+        if true_label not in cluster_counts[predlabel]:
+            cluster_counts[predlabel][true_label] = 0
+        cluster_counts[predlabel][true_label] += 1
     
     # Calculate purity
     total_samples = len(predicted_labels)
@@ -126,3 +127,29 @@ def forecasting_acc(x_fore, x_target, sta_reg = 25, avg = 3):
 # print("Normalized Mutual Information (NMI):", nmi)
 # print("Adjusted Rand Index (ARI):", ari)
 # print("Clustering Purity (ACC):", purity)
+
+
+
+def RUL_metric(pred, target): # TODO 
+    # pred and traget dim --> (samples_num, 1) estimation at the last time step of incomplete sequences
+    assert pred.shape == target.shape
+    instances_num = pred.shape[0]
+    # If normalization was applied put them back
+    pred = pred * 125. # TODO check if this 125. matches with how we normalized in the data formatting
+    target = target * 125.
+    
+    error_ = pred - target
+    error_ = error_.view(-1)
+        
+    # RMSE 
+    rmse_ = torch.round((((error_**2).sum()) / instances_num)**0.5, decimals = 5)
+
+    # SCORE
+    s = torch.zeros(instances_num)
+    for i in range (instances_num):
+        if error_[i] < 0:
+            s[i] = torch.exp(-error_[i]/13) - 1.
+        elif error_[i] >= 0:
+            s[i] = torch.exp(error_[i]/10) - 1.
+    score_ = torch.round(s.sum(), decimals = 5)
+    return rmse_.detach().cpu().numpy(), score_.detach().cpu().numpy(), error_.detach().cpu().numpy()

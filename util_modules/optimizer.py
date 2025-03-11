@@ -2,8 +2,9 @@ import torch
 import math
 import torch.nn as nn
 from torch.optim.optimizer import Optimizer
-from src.blocks import src_utils, normalizing_flow
-from src.modules import discriminator_Q
+import src
+# from src.blocks import src_utils, normalizing_flow
+# from src.modules import discriminator_Q
 def opt_constructor(scheduler,
         models, # list of parametric layers, modules, network model, etc.
         lr,
@@ -20,7 +21,7 @@ def opt_constructor(scheduler,
         wd_adam = None,
         
         logger = None,
-        exclude_sharedlayer = False
+        ft_lr_rate = 1.
         ):
     
     if not scheduler:
@@ -30,11 +31,18 @@ def opt_constructor(scheduler,
         
         
         for model in models:
-            if model is None:
-                continue
-            if isinstance(model, discriminator_Q.CodePosterior):
+            # Apply rl scaling when training for downstream task
+            if isinstance(model, src.Regressor):
+                ft_rate = 1.
+            else: ft_rate = ft_lr_rate
+            
+            # Filter out None object
+            if model is None: continue
+            
+            # Excluding params of layers in Q nets shared with Discriminator, which only gets updated w.r.t discrimantive loss
+            if isinstance(model, (src.CodePosterior, src.CodePosterior_seq)):
                 for n, p in model.named_parameters():
-                    if "shared_layer" in n:
+                    if "shared_net" in n:
                         seen_params.add(id(p)) 
                         
             non_bias_params = [p for n, p in model.named_parameters() if ('bias' not in n) and id(p) not in seen_params]
@@ -42,9 +50,9 @@ def opt_constructor(scheduler,
             
             model_param_groups = []
             if non_bias_params:  # Only add non-empty groups
-                model_param_groups.append({'params': non_bias_params, 'lr': lr, 'model_name': type(model).__name__+ "_weights"})
+                model_param_groups.append({'params': non_bias_params, 'lr': lr * ft_rate, 'model_name': type(model).__name__+ "_weights"})
             if bias_params:
-                model_param_groups.append({'params': bias_params, 'lr': lr, 'model_name': type(model).__name__ + "_bias"})
+                model_param_groups.append({'params': bias_params, 'lr': lr * ft_rate, 'model_name': type(model).__name__ + "_bias"})
                 
             # Track already added parameters using id()
             seen_params.update(id(p) for p in non_bias_params + bias_params)
@@ -59,18 +67,19 @@ def opt_constructor(scheduler,
             logger.info(f"Optimizer ({optimizer}) construction was successful")
         return opt, None, None
 
+    # Set optimizers with schedulers
     else:
-        # No weight decays to layernorm, embbeding modules, and etc.
+        # No weight decays to layernorm, embbeding modules, learnable tokens, and etc.
         def is_excluded(n, p, model):
             """ Helper function to determine if a parameter should be excluded from weight decay. """
             # No weight decays to learnable tokens
-            excluded_names = {"compressive_token", "score_token", "seqtoken", "bias", "scaling_factor"} 
+            excluded_names = {"compressive_token", "score_token", "seqtoken", "bias", "scaling_factor", "fault_token"} 
             if any(vars in n for vars in excluded_names):
                 return True
-            if isinstance(model, (nn.LayerNorm, nn.Embedding, 
-                                    src_utils.LayerNorm, normalizing_flow.st_block)):
+            if isinstance(model, (nn.LayerNorm, nn.Embedding, src.LayerNorm, src.st_block)):
                 return True
             return False
+        
         param_groups = []
         seen_params = set()
         for model in models:
@@ -79,16 +88,15 @@ def opt_constructor(scheduler,
             decay_params = []
             no_decay_params = []
             
+            # Filter out parameters not to include for update
             for n, p in model.named_parameters():
-                if p in seen_params:  # Prevent duplicate inclusion (e.g., shared layers)
-                    continue
-                if isinstance(model, discriminator_Q.CodePosterior):
-                    if "shared_layer" in n: # The layers shared between Discriminator and Q net do not get optimized wrt Generator's loss
-                        continue
-                if is_excluded(n, p, model):
-                    no_decay_params.append(p)
-                else:
-                    decay_params.append(p)
+                # Prevent duplicate inclusion (e.g., shared layers)
+                if p in seen_params: continue
+                if isinstance(model, (src.CodePosterior, src.CodePosterior_seq)):
+                    # Excluding params of layers in Q nets shared with Discriminator, which only gets updated w.r.t discrimantive loss
+                    if "shared_net" in n: continue
+                if is_excluded(n, p, model): no_decay_params.append(p)
+                else: decay_params.append(p)
                 seen_params.add(p)
 
             if decay_params:
@@ -97,15 +105,13 @@ def opt_constructor(scheduler,
                                     "weight_decay": start_wd if start_wd is not None else 0., 
                                     "WD_exclude": False,
                                     "model_name": type(model).__name__})
-                # logger.info(f"@@@@@@@@@@@@@@@@ {param_groups if param_groups is not None else 1}")
             if no_decay_params:
                 param_groups.append({"params": no_decay_params, 
                                     "lr": start_lr,
                                     "weight_decay": 0.0, 
                                     "WD_exclude": True,
                                     "model_name": type(model).__name__})
-                # logger.info(f"222222222222222222222222 {param_groups}")
-
+                
         opt = {'adam': torch.optim.AdamW(param_groups),
                'sgd': torch.optim.SGD(param_groups, momentum=0.90),
                'lion': Lion(param_groups)
@@ -118,8 +124,7 @@ def opt_constructor(scheduler,
             ref_lr=ref_lr,
             final_lr=final_lr,
             T_max=fianl_step)
-
-        wd_scheduler = None
+        
         if (start_wd == 0) and (final_wd == 0):
             wd_scheduler = None
         else:

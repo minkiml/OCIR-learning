@@ -1,8 +1,8 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch 
-
-from src.modules import (encoders, generators, discriminator_Q, distributions, flow_transforms) 
+import numpy as np
+import src.modules as md # (encoders, generators, discriminator_Q, distributions, flow_transforms) 
 from src.blocks import transformers
 
 
@@ -17,26 +17,26 @@ class InfoGAN(nn.Module):
         self.c_type = c_type
         self.code_posterior_param = c_posterior_param
         # Prior Distributions p(z') and p(c)
-        self.prior_z = distributions.DiagonalGaussian(dz, mean = 0, var = 1, device=device)
+        self.prior_z = md.DiagonalGaussian(dz, mean = 0, var = 1, device=device)
         # TODO there is distributional mismatch if use gasNLL or implement gaussian one for c 
-        self.prior_c = distributions.UniformDistribution(device=device) if c_type == "continuous" \
-                else distributions.DiscreteUniform(dc, onehot = True, device=device) 
+        self.prior_c = md.UniformDistribution(device=device) if c_type == "continuous" \
+                else md.DiscreteUniform(dc, onehot = True, device=device) 
                 # else distributions.ContinuousCategorical(dc, 
                 #                                         gumbel_temperature= 0.3,
                 #                                         decay_rate= 0.95,
                 #                                         dist="uniform",
                 #                                         device=device)
                 # else distributions.DiscreteUniform(dc, onehot = True, device=device) 
-        self.h = flow_transforms.LatentFlow(dz, self.prior_z)
+        self.h = md.LatentFlow(dz, self.prior_z)
         
-        self.G = generators.Decoder(dx=dx, dz=dz, dc=dc, window=window, d_model=d_model,
+        self.G = md.Decoder(dx=dx, dz=dz, dc=dc, window=window, d_model=d_model,
                                     num_heads=num_heads, p_h = self.h, p_c = self.prior_c)
         self.shared_net = transformers.shared_transformer(dx=dx, d_model=d_model, window=window, 
                                                     num_heads=num_heads, D_projection=D_projection)
-        self.D = discriminator_Q.Discriminator(dx=dx, window=window, d_model=d_model,
+        self.D = md.Discriminator(dx=dx, window=window, d_model=d_model,
                                                num_heads=num_heads, D_projection=D_projection,
                                                shared_layer= self.shared_net)
-        self.Q = discriminator_Q.CodePosterior(dx=dx, dc=dc, d_model=d_model, c_type=c_type, 
+        self.Q = md.CodePosterior(dx=dx, dc=dc, d_model=d_model, c_type=c_type, 
                                                c_posterior_param=c_posterior_param,
                                                shared_layer=self.shared_net)
         
@@ -48,12 +48,18 @@ class InfoGAN(nn.Module):
         real = self.D(x)
         # print("D real:          ", real)
         # print("D fake:          ", fake)
-        real_loss = torch.mean((real -1)**2)
-        fake_loss = torch.mean((fake)**2) 
-        return 0.5 * (real_loss + fake_loss), [real_loss, fake_loss] 
+        # print(real.shape)
+        # raise NotImplementedError("")
+        if real.dim() == 2:
+            real_loss = torch.mean((real -1)**2)
+            fake_loss = torch.mean((fake)**2) 
+        elif real.dim() == 3:
+            real_loss = torch.sum((real -1)**2, dim = 1)
+            fake_loss = torch.sum((fake)**2, dim = 1) 
+        return 0.5 * torch.mean(real_loss + fake_loss), [torch.mean(real_loss), torch.mean(fake_loss)] 
     def Loss_Generator(self, x, epoch = 1):
         if epoch is not None:
-            annealing = min(.5, epoch / 20)
+            annealing = min(0.1, epoch / 20)
         else: annealing = 0.1
         
         sample_size = x.shape[0]
@@ -64,7 +70,10 @@ class InfoGAN(nn.Module):
         q_code_mu, q_code_logvar = self.Q(x_gen)
             # - log_det
         # Generator loss
-        gen_loss = 0.5 * torch.mean((gen - 1)**2)    
+        if gen.dim() == 2:
+            gen_loss = 0.5 * torch.mean((gen - 1)**2)    
+        elif gen.dim() == 3:
+            gen_loss = 0.5 * torch.mean(torch.sum((gen - 1)**2, dim = 1))    
         if self.c_type == "continuous":
             if self.code_posterior_param == "soft":
                 NLL_loss_Q = self.prior_c.NLL_gau(c, q_code_mu, q_code_logvar, "mean")
@@ -84,53 +93,77 @@ class InfoGAN(nn.Module):
         # log_pz = self.prior_z.log_prob(z)
         # # KL div & logdet
         # reverse_kl =  -(log_qz).mean() #- (log_pz).mean() # .mean()
+        # print("z:  ", z[0:2])
+        # log_qz = self.prior_z.log_prob(z)
+        # print("log_qz: ", log_qz[0:2])
+        # print("logdet: ", logdet[0:2])
+        # reverse_kl = - (log_qz + logdet).mean()
+        # reverse_kl = - (logdet).mean()
+        log_qz0 = self.unit_MVG_Guassian_log_prob(z0)
+        log_qz0 -= logdet
+        log_p_z = self.unit_MVG_Guassian_log_prob(z)
         
-        log_qz = self.prior_z.log_prob(z)
-        reverse_kl = - (log_qz + logdet).mean()
+        reverse_kl = torch.mean(log_qz0) - torch.mean(log_p_z)
+        
+        #####
+        #####
+        #entropy = self.prior_z.H(log_var=None) # a constant
+        #neg_ELBO = - torch.mean(entropy + logdet)
+
         # reverse_kl *= annealing
         
-        return gen_loss + NLL_loss_Q + (reverse_kl), [gen_loss, NLL_loss_Q, reverse_kl]
-     
+        return gen_loss + (0.2 * NLL_loss_Q) + (annealing * reverse_kl ), [gen_loss, NLL_loss_Q, annealing * reverse_kl]
+    
+    def unit_MVG_Guassian_log_prob(self, sample):
+        return -0.5*torch.sum((sample**2 + np.log(2*np.pi)), dim=1)
 class VAE(nn.Module):
     def __init__(self, 
                 dx:int = 14, dz:int = 10, dc:int = 6, window:int = 25, d_model:int = 128, 
                 num_heads:int = 4, z_projection:str = "aggregation", D_projection:str = "aggregation", 
                 time_emb:bool = True, c_type:str = "discrete", c_posterior_param:str = "soft", encoder_E:str = "transformer",
-                device = "cpu"): 
+                device = "cpu", supervised = True): 
         super(VAE, self).__init__()
-        self.prior_z = distributions.DiagonalGaussian(dz, mean = 0, var = 1, device=device)
-        # TODO there is distributional mismatch if use gasNLL or implement gaussian one for c 
-        self.prior_c = None 
-        # distributions.UniformDistribution(device=device) if c_type == "continuous" \
-        #                         else distributions.DiscreteUniform(dc, onehot = True, device=device) 
+        self.device = device
+        self.supervised = supervised
+        self.prior_z = md.DiagonalGaussian(dz, mean = 0, var = 1, device=device)
         
         # NF transform
-        self.h = flow_transforms.LatentFlow(dz, self.prior_z)
-        
-        self.f_E = encoders.LatentEncoder(dx=dx, dz=dz, window=window, d_model=d_model, 
+        self.h = None # md.LatentFlow(dz, self.prior_z)
+        self.shared_encoder_layers = None
+        self.f_E = md.LatentEncoder(dx=dx, dz=dz, window=window, d_model=d_model, 
                                     num_heads=num_heads, z_projection=z_projection, 
-                                    time_emb=time_emb, encoder_E=encoder_E, p_h=self.h) 
-        
-        # self.f_C = encoders.CodeEncoder(dx=dx, dc=dc, d_model=d_model, 
-        #                                 c_type=c_type, c_posterior_param=c_posterior_param)
-        
-        
+                                    time_emb=time_emb, encoder_E=encoder_E, p_h=self.prior_z) 
+        if not supervised:
+            self.f_C = None
+            self.prior_c = None 
+            # self.prior_c = md.UniformDistribution(device=device) if c_type == "continuous" \
+            #                     else md.DiscreteUniform(dc, onehot = True, device=device) 
+            # self.f_C = md.CodeEncoder(dx=dx, dc=dc, d_model=d_model, 
+            #                                 c_type=c_type, c_posterior_param=c_posterior_param)
+        else: 
+            self.prior_c = None 
+            self.f_C = None
         # Decoder
-        self.f_D = generators.Decoder(dx=dx, dz=dz, dc=dc, window=window, d_model=d_model,
+        self.f_D = md.Decoder(dx=dx, dz=dz, dc=dc, window=window, d_model=d_model,
                                     num_heads=num_heads, p_h = self.h, p_c = self.prior_c)
         
-    def Loss_VAE(self, x, tidx, epoch = None):
+    def Loss_VAE(self, x, tidx, cond =None, epoch = None):
         if epoch is not None:
-            annealing = min(1.0, epoch / 10)
-        else: annealing = 1.0
+            annealing = min(0.1, epoch / 15)
+        else: annealing = 0.1
         N, L, _ = x.shape
         # beta is a warm-up coefficient for preventing negative 
         # Encoding
         mu, log_var, zin = self.f_E(x, tidx)
         z, logdet, z0 = self.f_E.reparameterization_NF(mu, log_var)
+        
+        # eps = self.prior_z.sample(mu.shape)
+        # stds = torch.exp(0.5 * log_var)
+        # z = eps * stds + mu
+        
         # c, c_logvar = self.f_C(x)
         # Decoding
-        x_rec = self.f_D(z, c = None, zin = zin)
+        x_rec = self.f_D(z, c = cond, zin = zin)
         
         # print("mu:  ", mu.mean())
         # print("log_var:  ", log_var.mean()) 
@@ -139,7 +172,7 @@ class VAE(nn.Module):
         
         # Reconstruction & CC is implicitly made since G and f_D share the parameters
         # recon = F.mse_loss(x_rec, x, reduction = 'mean') # smooth_l1_loss 
-        recon = F.mse_loss(x_rec, x, reduction = 'mean')# smooth_l1_loss 
+        recon = F.mse_loss(x_rec, x, reduction = 'sum') / (N ) # smooth_l1_loss 
 
         kl_div = (-0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).sum(-1)).mean()
         
@@ -147,19 +180,23 @@ class VAE(nn.Module):
 
     def L_R(self, x, tidx, cond =None, epoch = None):
         if epoch is not None:
-            annealing = min(0.1, epoch / 7)
-        else: annealing = 0.01
+            annealing = min(0.15, epoch / 30)
+        else: annealing = 0.15
         N, L, _ = x.shape
         # beta is a warm-up coefficient for preventing negative 
         # Encoding
         mu, log_var, zin = self.f_E(x, tidx)
-        z, logdet, z0 = self.f_E.reparameterization_NF(mu, log_var)
-        # print("mu!!:    ", mu[0:2,:])
-        # print("log_var!!:    ", log_var[0:2,:])
+        # z, logdet, z0 = self.f_E.reparameterization_NF(mu, log_var)
+        
+        eps = self.prior_z.sample(mu.shape)
+        stds = torch.exp(0.5 * log_var)
+        z0 = eps * stds + mu
+        z, logdet, z0 = self.f_E.p_h(z0 = z0)
 
-        # print("z0!!:    ", z0[0:2,:])
-        # print("z!!:    ", z[0:2,:])
-        # c, c_logvar = self.f_C(x)
+        if self.f_C:
+            cond = self.f_C(x)
+            # TODO how to reparam?
+        
         # Decoding
         x_rec = self.f_D(z,c = cond, zin = zin)
         
@@ -169,9 +206,10 @@ class VAE(nn.Module):
         # print("c_logvar", c_logvar) 
         
         # # Reconstruction & CC is implicitly made since G and f_D share the parameters
-        recon = F.mse_loss(x_rec, x, reduction = 'sum') / (N+L)  # smooth_l1_loss 
+        recon = F.mse_loss(x_rec, x, reduction = 'sum') / (N)  # smooth_l1_loss 
         
-        
+        ########
+        ########
         # kl_div = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).sum(-1)
         # kl_div -= logdet
         # kl_div = kl_div.mean()
@@ -181,29 +219,42 @@ class VAE(nn.Module):
         # print("z0:   ",z0)
         # logq(z'|x), where z' = z0  # Check this objective again
         
-        log_qz0 = self.prior_z.log_prob(z0, mu, log_var)
-        log_qz = log_qz0 - logdet
-        # print("log_qz0: ", log_qz0.mean())
-        # print("logdet", logdet.mean())
-        log_pz = self.prior_z.log_prob(z)
-        # KL div & logdet
-        kl_div =  (log_qz - log_pz).mean() # .mean()
+        ########
+        ########
+        # log_qz0 = self.prior_z.log_prob(z0, mu, log_var)
+        # log_qz = log_qz0 - logdet
+        # # print("log_qz0: ", log_qz0.mean())
+        # # print("logdet", logdet.mean())
+        # log_pz = self.prior_z.log_prob(z)
+        # # KL div & logdet
+        # kl_div =  (log_qz - log_pz).mean() # .mean()
+
+        ########
+        ########
+        # entropy = self.prior_z.H(log_var=log_var)
+        # neg_ELBO = - torch.mean(entropy + logdet)  # kl term in elbo
         
-        # log_q_z0 = -0.5 * torch.sum(torch.log(2 * torch.tensor(torch.pi)) + log_var + (z0 - mu).pow(2) / log_var.exp(), dim=1)
-        # log_p_zK = -0.5 * torch.sum(z0.pow(2), dim=1) # prior is standard normal. z_0 is the same size as z_K, as we use the change of variables formula.
-        # print(logdet)
-        # kl_div = torch.mean(log_q_z0 - log_p_zK - logdet)
+        ########
+        ########
+        log_qz0 = self.unit_MVG_Guassian_log_prob(eps) # equiv
+        log_qz0 -= torch.sum(0.5 * log_var, dim=1)
+        log_qz0 -= logdet
+        log_p_z = self.unit_MVG_Guassian_log_prob(z)
+        kl_div = torch.mean(log_qz0) - torch.mean(log_p_z)
         
-        # print("logdet: ", logdet)
-        # print(log_qz.mean())
-        # print("logpz", log_pz.mean())
-        # kl_div = torch.clamp(kl_div, min=0)
         
-        # print("recon", recon)
-        # print("kl_div", kl_div)
+        ########
+        ######## KL for f_C  TODO
+        # log_qz0 = self.unit_MVG_Guassian_log_prob(eps) # equiv
+        # log_qz0 -= torch.sum(0.5 * log_var, dim=1)
+        # log_qz0 -= logdet
+        # log_p_z = self.unit_MVG_Guassian_log_prob(z)
+        # kl_div = torch.mean(log_qz0) - torch.mean(log_p_z)
         
-        # x 0.5 as the reconstruction is done through G (shared net) as well 
-        return recon + (annealing*kl_div), [recon, annealing*kl_div]
+        return recon + (annealing*kl_div) , [recon, annealing*kl_div]
+    
+    def unit_MVG_Guassian_log_prob(self, sample):
+        return -0.5*torch.sum((sample**2 + np.log(2*np.pi)), dim=1)
     
 class AE(nn.Module):
     def __init__(self, 
@@ -212,13 +263,13 @@ class AE(nn.Module):
                 time_emb:bool = True, c_type:str = "discrete", c_posterior_param:str = "soft", encoder_E:str = "transformer",
                 device = "cpu"): 
         super(AE, self).__init__()
-        self.prior_z = distributions.DiagonalGaussian(dz, mean = 0, var = 1, device=device)
+        self.prior_z = md.DiagonalGaussian(dz, mean = 0, var = 1, device=device)
         # TODO there is distributional mismatch if use gasNLL or implement gaussian one for c 
         self.prior_c = None 
         # distributions.UniformDistribution(device=device) if c_type == "continuous" \
         #                         else distributions.DiscreteUniform(dc, onehot = True, device=device) 
            
-        self.f_E = encoders.LatentEncoder(dx=dx, dz=dz, window=window, d_model=d_model, 
+        self.f_E = md.LatentEncoder(dx=dx, dz=dz, window=window, d_model=d_model, 
                                     num_heads=num_heads, z_projection=z_projection, 
                                     time_emb=time_emb, encoder_E=encoder_E, p_h=None) 
         
@@ -227,7 +278,7 @@ class AE(nn.Module):
         
         
         # Decoder
-        self.f_D = generators.Decoder(dx=dx, dz=dz, dc=dc, window=window, d_model=d_model,
+        self.f_D = md.Decoder(dx=dx, dz=dz, dc=dc, window=window, d_model=d_model,
                                     num_heads=num_heads, p_h = None, p_c = None)
         
     def Loss_AE(self, x, tidx, cond = None, epoch = None):

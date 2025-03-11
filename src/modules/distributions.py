@@ -9,12 +9,12 @@ import torch.nn.functional as F
 
 class DiagonalGaussian(nn.Module):
     gumbel = False
-    def __init__(self, dim, mean = 0, var = 1,
+    def __init__(self, dim, mean = 0., var = 1.,
                  device = "cpu"):
         super(DiagonalGaussian, self).__init__()
         self.dim = dim
-        self.mean = mean
-        self.var = var
+        self.mean = torch.tensor(mean, dtype=torch.float32)
+        self.var = torch.tensor(var, dtype=torch.float32)
         self.std = torch.sqrt(torch.tensor(var, dtype=torch.float32))  # Standard deviation (sqrt of variance)
 
         self.device =device
@@ -64,17 +64,19 @@ class DiagonalGaussian(nn.Module):
         log_prob = -0.5 * (diff / torch.exp(log_std)) ** 2  # Quadratic term
 
         if normalize:
-            log_prob -= 0.5 * z_dim * np.log(2 * np.pi)  # Constant term
+            log_prob -= 0.5 * np.log(2 * np.pi)  # Constant term
 
         log_prob -= log_std  # Log determinant term
 
         return log_prob.sum(dim=-1)  # Sum over dimensions
-    def H(self):
+    def H(self, log_var = None):
         """
         Computes the entropy of the diagonal Gaussian distribution.
         """
         # Entropy of a diagonal Gaussian is: H = 0.5 * (dim * log(2 * pi * e) + sum(log(var)))
-        entropy = 0.5 * (self.dim * torch.log(2 * torch.pi * torch.exp(torch.tensor(1., device=self.device))) + torch.sum(torch.log(self.var)))
+        if log_var is None:
+            log_var = torch.log(self.var)
+        entropy = 0.5 * (np.log(2 * np.pi) + torch.sum(log_var, dim = -1))
         return entropy
     
     def NLL(self, z, mu, log_var, aggr = "mean"):
@@ -82,7 +84,7 @@ class DiagonalGaussian(nn.Module):
 
     def hard_fitting(self, z_true, z_mu):
         N = z_true.shape[0]
-        return F.mse_loss(z_mu, z_true, reduction = 'mean')  #/ N
+        return F.mse_loss(z_mu, z_true, reduction = 'sum')  / (N)
     
 class UniformDistribution(nn.Module):
     gumbel = False
@@ -146,7 +148,7 @@ class UniformDistribution(nn.Module):
         log_prob = -0.5 * (diff / torch.exp(log_std)) ** 2  # Quadratic term
 
         if normalize:
-            log_prob -= 0.5 * c_dim * np.log(2 * np.pi)  # Constant term
+            log_prob -= 0.5  * np.log(2 * np.pi)  # Constant term
 
         log_prob -= log_std  # Log determinant term
         return log_prob.sum(dim=-1)  # Sum over dimensions 
@@ -156,7 +158,15 @@ class UniformDistribution(nn.Module):
         Computes the entropy of the uniform distribution.
         """
         return torch.log(torch.tensor(self.high - self.low, device=self.device))
-    
+    def H_gau(self, log_var = None):
+        """
+        Computes the entropy of the diagonal Gaussian distribution.
+        """
+        # Entropy of a diagonal Gaussian is: H = 0.5 * (dim * log(2 * pi * e) + sum(log(var)))
+        if log_var is None:
+            log_var = torch.log(self.var)
+        entropy = 0.5 * (np.log(2 * np.pi) + torch.sum(log_var, dim = -1))
+        return entropy
     def NLL(self, c, aggr = "sum"): # TODO check this 
         return -torch.sum(self.log_prob(c)) if aggr == "sum" else -torch.mean(self.log_prob(c))
     

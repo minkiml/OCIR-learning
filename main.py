@@ -3,39 +3,61 @@
 import os
 import argparse
 import logging
-import numpy as np
-import torch
-
+from copy import deepcopy 
 from torch.backends import cudnn
 from util_modules import utils
 import pipelines
 
-def main(args, logger):
+def Learning_RL(args, logger):
+    logger.info(f"********************* Representation learning *********************")
+    if config.net == "ocir":
+        learning = pipelines.RlPipeline(args, logger)
+    elif config.net == "infogan": 
+        learning = pipelines.InfoGANPipeline(args, logger)
+    elif config.net == "vae": 
+        learning = pipelines.VAEPipeline(args, logger)
+    elif config.net == "ae": 
+        learning = pipelines.AEPipeline(args, logger)
+    elif config.net == "ocir_deep":
+        learning = pipelines.RlPipeline_deep(args, logger)
+    model = learning()
+    pipelines.Stationarization(args, model, logger)
+    return model
 
-    if config.task == "RL":
-        logger.info(f"********************* Training Pipeline *********************")
-        if config.net == "ocir":
-            learning = pipelines.RlPipeline(args, logger)
-        elif config.net == "infogan": 
-            learning = pipelines.InfoGANPipeline(args, logger)
-        elif config.net == "vae": 
-            learning = pipelines.VAEPipeline(args, logger)
-        elif config.net == "ae": 
-            learning = pipelines.AEPipeline(args, logger)
-        elif config.net == "ocir2":
-            learning = pipelines.OCIR2RlPipeline(args, logger)
-    elif config.task == "rul":
-        logger.info(f"********************* RUL estimation Pipeline *********************")
-        learning = pipelines.RulPipeline(args, logger)
+def Learning_RUL(args, logger, encoder = None, shared_layer = None):
+    logger.info(f"********************* RUL estimation Pipeline *********************")
+    learning = pipelines.RulPipeline(args, logger, encoder, shared_layer)
+    model = learning()
+    return model
 
-    elif config.task == "rep_trj":
-        logger.info(f"********************* Representation level trajectory construction Pipeline *********************")
-        learning = pipelines.RlTrjPipeline(args, logger)
-    
-    elif config.task == "data_trj":
+def Learning_TRJ(args, logger, encoder = None):
+    if config.task == "data_trj":
         logger.info(f"********************* Data level trajectory construction Pipeline  *********************")
         learning = pipelines.DataTrjPipeline(args, logger)
-    learning()
+    else:
+        raise NotImplementedError("")
+    
+def main(args, logger):
+    if config.task == "RL":
+        rl_model = Learning_RL(args, logger)
+        
+    elif config.task == "rul":
+        encoder = None
+        shared_layer = None
+        if os.path.exists(os.path.join(config.model_save_path, 'rul_cp.pth')):
+            pass
+        else:
+            # Load a traied encoder if available, otherwise will train one first 
+            rl_model = Learning_RL(args, logger)
+            encoder = deepcopy(rl_model.f_E)
+            if rl_model.shared_encoder_layers:
+                shared_layer = deepcopy(rl_model.shared_encoder_layers)
+                
+        rul_model = Learning_RUL(args, logger, encoder, shared_layer)
+        
+    elif (config.task == "data_trj"):
+        Learning_TRJ(args, logger)
+        
     return None
 
 
@@ -48,11 +70,12 @@ if __name__ == '__main__':
     
     # Task & data args
     parser.add_argument("--task", type=str, default="RL", choices = ["RL", "rul", 
-                                                                    "rep_trj", "data_trj"])
+                                                                    "stationarization", "data_trj"])
     parser.add_argument("--dataset", type=str, default="FD001", choices = {"FD001", "FD002", "FD003", "FD004", "circle"})
     parser.add_argument("--c_type", type=str, default="discrete", help = " This argument is for circle data")
-    parser.add_argument("--net", type=str, default="ocir", help = ["ocir", "infogan", "vae", "ae", "ocir2"])
-
+    parser.add_argument("--net", type=str, default="ocir", help = ["ocir", "infogan", "vae", "ae", "ocir_deep"])
+    parser.add_argument("--valid_split", type=float, default=0., help= "learning rate")
+    
     # Training args
     parser.add_argument("--seed", type=int, default=55)
     parser.add_argument("--gpu_dev", type=str, default="6")
@@ -60,10 +83,15 @@ if __name__ == '__main__':
     parser.add_argument("--batch", type=int, default=128)
     parser.add_argument("--patience", type=int, default=10)
     
+    parser.add_argument("--rul_epochs", type=int, default=50)
+    parser.add_argument("--fore_epochs", type=int, default=50)
+
     # optimizer
     parser.add_argument("--lr_", type=float, default=5e-4, help= "learning rate")
     parser.add_argument("--scheduler", type=int, default=0)
-    
+    parser.add_argument("--alpha", type=float, default=0.8)
+    parser.add_argument("--kl_annealing", type=float, default=0.15)
+
     ## Scheduler params
     parser.add_argument("--warm_up", type=float, default=0.2, help="portion of warm up given number of epoches, e.g., 20 percent by defualt")
     parser.add_argument("--start_lr", type=float, default=1e-5, help="starting learning rate")
@@ -82,7 +110,7 @@ if __name__ == '__main__':
     parser.add_argument("--H", type=int, default=2)
     parser.add_argument("--hyper_lookback", type=int, default=2)
     parser.add_argument("--time_embedding", type=bool, default=False)
-    # parser.add_argument("--ocs_dim", type=int, default=1) num_heads
+    parser.add_argument("--mmi", type=int, default=0, help = "explicit mutual information I(z;c) minimization")
     
     parser.add_argument("--dx", type=int, default=14)
     parser.add_argument("--dz", type=int, default=20)
@@ -96,13 +124,19 @@ if __name__ == '__main__':
                         choices = ["aggregation", "spc", "rnn", "seq", "aggregation_all"])
     ## Discriminator
     parser.add_argument("--D_projection", type=str, default="spc", 
-                    choices = ["aggregation", "spc",  "rnn"])
+                    choices = ["aggregation", "spc",  "rnn", "None"])
     ## Q and coder encoder
     parser.add_argument("--c_posterior_param", type=str, default="soft", choices = ["soft", "hard"])
     
-    # Downstream models
+    # Downstream task hyper params
+    parser.add_argument("--extractor", type=str, default="ocir", choices= ["ocir", "vae"])
     parser.add_argument("--trajectory_net", type=str, default="")
     ...
+    
+    # Baseline hyperparams
+    parser.add_argument("--conditional", type=int, default=1)
+    
+    
     config = parser.parse_args()
     
     log_path = config.log_path + config.dataset + "_" + f"{config.id_}" + "_" + f"{config.description}" 
@@ -137,30 +171,3 @@ if __name__ == '__main__':
     print('-------------- End ----------------')
     
     main(args, logger)
-    
-    
-    # Training config
-    
-    # opt config
-    
-    # Data config
-    
-    # Model config
-    
-    #  
-
-    # if config.task == "training":
-    #     logger.info(f"********************* Training Pipeline *********************")
-    #     training_pipeline()
-        
-    # elif config.task == "rul_estimation":
-    #     logger.info(f"********************* RUL estimation Pipeline *********************")
-    #     rul_estimation_pipeline()
-    
-    # elif config.task == "rep_level_trj":
-    #     logger.info(f"********************* Representation level trajectory construction Pipeline *********************")
-    #     rep_level_trajectory_pipeline()
-    
-    # elif config.task == "data_level_trj":
-    #     logger.info(f"********************* Data level trajectory construction Pipeline  *********************")
-    #     data_level_trajectory_pipeline()

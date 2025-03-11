@@ -49,7 +49,7 @@ class Solver(object):
             raise NotImplementedError("")
             load_circle()
         else: 
-            self.training_data, self.val_data, self.testing_data = load_CMAPSS(dataset = self.dataset,
+            self.training_data, self.val_data, self.testing_data, self.full_test_set = load_CMAPSS(dataset = self.dataset,
                                                                     data_path = self.data_path,
                                                                     task = self.task,
                                                                     T = self.window,
@@ -83,7 +83,7 @@ class Solver(object):
                         c_posterior_param=self.c_posterior_param, encoder_E=self.encoder_E, device=self.device)
         
         print_model(ocir, "OCIR")
-        self.ocir = ut.load_model(ocir, self.model_save_path, "ocir")
+        self.ocir, self.required_training = ut.load_model(ocir, self.model_save_path, "OCIR")
         self.ocir.to(self.device)
         
     def get_optimizers(self):

@@ -26,20 +26,24 @@ def save_args(params, filename, path):
         json.dump(vars(params), f, indent=4)
         
 def save_model(model_, path_, name):
-    model_.train(True)
+    model_.train(False)
     torch.save(model_.state_dict(), os.path.join(path_, f"{name}_cp.pth"))
 
 def load_model(model, path_, name):
     try:
         if os.path.exists(os.path.join(path_, f'{name}_cp.pth')):
-            print("Pre-trained model is loaded")
-            return model.load_state_dict(torch.load(
-                    os.path.join(path_, f'{name}_cp.pth'),weights_only=True))
+            print(f"Pre-trained model ({name}) is loaded")
+            state_dict = torch.load(os.path.join(path_, f'{name}_cp.pth'), weights_only=True)
+            model.load_state_dict(state_dict, strict=True)
+            # model = model.load_state_dict(torch.load(
+            #         os.path.join(path_, f'{name}_cp.pth'),weights_only=True))
+            return model, False
         else:
             print("No pre-trained model exists")
-            return model
+            return model, True
     except: 
-        return None
+        raise ImportError("Loading trained model failed. Check if the model parameters and arguments are matching")
+        return None, None
 
 def onehot_encoding(c, classes):
     N, L, _ = c.shape
@@ -74,7 +78,11 @@ class Evaluation():
                             prior_c, c_E, c_gt, c_Q,
                             time_ind,
                             discrete = False,
-                            epoch = ""):
+                            epoch = "",
+                            prior_c2 = None, c_E2 = None, c_Q2 = None,
+                            
+                            prior_zG = None, Z0G = None
+                            ):
         '''
         Yield the following visual (qualitative) analysis
         The c inputs are logits. 
@@ -128,24 +136,33 @@ class Evaluation():
         
         # pca.fit(z_E)
         # z_E = pca.transform(z_E)
-        
+        if prior_zG is not None:
+            prior_zG, Z0G = prior_zG.detach().cpu().numpy(), Z0G.detach().cpu().numpy()
+            pca = PCA(n_components=2)
+            pca.fit(np.concatenate((prior_zG, Z0G), axis = 0))
+            prior_zG, Z0G = pca.transform(prior_zG), pca.transform(Z0G)
+            # 00) 
+            self.comparison_plot(prior_zG, Z0G, labels = [r"$p(z0)$", r"$q_{E}(z0|x_{G})$"], path = self.latent_pics, plotname = "Gen_prior_vs_posterior", epo = epoch)
+            
         # 0)
         self.comparison_plot(z_E, z0_E, labels = [r"$q_{h}(z|x)$", r"$q_{E}(z0|x)$"], path = self.latent_pics, plotname = "Posterior_zh_vs_z0", epo = epoch)
-        self.kde_plot(z_E, z0_E, labels = [r"$q_{h}(z|x)$", r"$q_{E}(z0|x)$"], path = self.latent_pics, plotname = "kde_Posterior_zh_vs_z0", epo = epoch)
+        self.kde_plot(z_E, z0_E, labels = [r"$q_{h}(z|x)$", r"$q_{E}(z0|x)$"], path = self.latent_pics, plotname = "Posterior_kde_zh_vs_z0", epo = epoch)
         
         # 1)
-        self.comparison_plot(z_h, prior_z, labels = [r"$z \sim p_{h}(z)$", r"$z' \sim p(z')$"], path = self.latent_pics, plotname = "Sampled zh_vs_priorZ", epo = epoch)
-        self.kde_plot(z_h, prior_z, labels = [r"$z \sim p_{h}(z)$", r"$z' \sim p(z')$"], path = self.latent_pics, plotname = "kde_zh_vs_priorZ", epo = epoch)
+        self.comparison_plot(z_h, prior_z, labels = [r"$z \sim p_{h}(z|x)$", r"$z' \sim p(z0|x)$"], path = self.latent_pics, plotname = "overgaussian_zh_vs_priorZ", epo = epoch)
+        self.kde_plot(z_h, prior_z, labels = [r"$z \sim p_{h}(z|x)$", r"$z' \sim p(z0|x)$"], path = self.latent_pics, plotname = "overgaussian_kde_zh_vs_priorZ", epo = epoch)
 
         # 2)
-        self.comparison_plot(z_h, z_E, labels = [r"$z \sim p_{h}(z)$", r"$z \sim q(z|x)$"], path = self.latent_pics, plotname = "Sampled_zh_vs_posteriorZ", epo = epoch)
-        self.kde_plot(z_h, z_E, labels = [r"$z \sim p_{h}(z)$", r"$z \sim q(z|x)$"], path = self.latent_pics, plotname = "kde_Sampled_zh_vs_posteriorZ", epo = epoch)
+        # self.comparison_plot(z_h, z_E, labels = [r"$z \sim p_{h}(z)$", r"$z \sim q(z|x)$"], path = self.latent_pics, plotname = "Sampled_zh_vs_posteriorZ", epo = epoch)
+        # self.kde_plot(z_h, z_E, labels = [r"$z \sim p_{h}(z)$", r"$z \sim q(z|x)$"], path = self.latent_pics, plotname = "kde_Sampled_zh_vs_posteriorZ", epo = epoch)
         
         # 3)
-        self.structural_plot(z_h, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "Sampled_ZH_with_time", epo = epoch)
-        self.structural_plot(z_E, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "posteriorZ_with_time", epo = epoch)
-        self.structural_plot(z0_E, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "posteriorZ0_with_time", epo = epoch)
+        # self.structural_plot(z_h, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "Sampled_ZH_with_time", epo = epoch)
+        self.structural_plot(z_E, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "posteriorZ_X", epo = epoch)
+        self.structural_plot(z0_E, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "posteriorZ0_X", epo = epoch)
 
+        self.structural_plot(prior_z, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "overgaussian_Z0_X", epo = epoch)
+        self.structural_plot(z_h, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "overgaussian_Z_X", epo = epoch)
         # Code represenataions
         if c_E.shape[-1] >= 2:
             # c_Q = (c_Q - c_Q.mean(dim = 0, keepdim = True)) / torch.clamp(c_Q.std(dim = 0, keepdim = True), min=1e-6) 
@@ -163,7 +180,7 @@ class Evaluation():
             prior_c, c_E, c_Q = prior_c.detach().cpu().numpy()[:,-1,:] if not discrete else None, c_E.detach().cpu().numpy()[:,-1,:], c_Q.detach().cpu().numpy()[:,-1,:] # (N,dc)
 
             # PCA on C
-            if not (c_E.shape[-1] == 2):
+            if (c_E.shape[-1] > 2):
                 pca = PCA(n_components=2)
                 if discrete:
                     pca.fit(np.concatenate((c_E, c_Q), axis = 0))
@@ -185,9 +202,31 @@ class Evaluation():
 
         elif prior_c.shape[-1] == 1:
             # continous of dim 1 case -> line plot
-            pass
-            raise NotImplementedError("")
+            if not discrete:
+                prior_c, c_E, c_Q = prior_c.detach().cpu().numpy()[:,-1,:] if not discrete else None, c_E.detach().cpu().numpy()[:,-1,:], c_Q.detach().cpu().numpy()[:,-1,:] # (N,dc)
+                prior_c_labels = None
+                # 5)        
+                self.comparison_plot(prior_c, c_E, aux = prior_c_labels, labels = [r"$p(c)$", r"$q_{C}(c|x)$"], path = self.code_pics, plotname = "pc vs posteriorC", epo = epoch)
+                # 5.2)
+                self.comparison_plot(prior_c, c_Q, aux = prior_c_labels, labels = [r"$p(c)$", r"$q_{Q}(c|x)$"], path = self.code_pics, plotname = "pc vs posteriorC_Q", epo = epoch)
+                # 6)
+                c_gt = c_gt[:,-1,:]
+                self.structural_plot(c_E, c_gt.squeeze().detach().cpu().numpy(), aux_name = "Operating conditions", path = self.code_pics, plotname = "posteriorC_with_true_ocs", epo = epoch)
 
+        if prior_c2 is not None:
+            # Always discrete
+            prior_c_labels2 = torch.argmax(prior_c2[:,:], dim = -1).squeeze().detach().cpu().numpy()
+            c_E2_labels2 = torch.argmax(c_E2[:,:], dim = -1).squeeze().detach().cpu().numpy()
+            c_E2, c_Q2 = c_E2.detach().cpu().numpy()[:,:], c_Q2.detach().cpu().numpy()[:,:] # (N,dc)
+            if (c_E2.shape[-1] > 2):
+                pca = PCA(n_components=2)
+                if discrete:
+                    pca.fit(np.concatenate((c_E2, c_Q2), axis = 0))
+                    c_E2, c_Q2 =  pca.transform(c_E2), pca.transform(c_Q2) 
+          
+            self.structural_plot(c_Q2, prior_c_labels2, aux_name = "Operating conditions", path = self.code_pics, plotname = "HC_posteriorQ2_with_priors", epo = epoch)
+            self.structural_plot(z_E, c_E2_labels2, aux_name = "Health condition", path = self.latent_pics, plotname = "HC_posteriorZ_X", epo = epoch)
+            self.structural_plot(z0_E, c_E2_labels2, aux_name = "Health condition", path = self.latent_pics, plotname = "HC_posteriorZ0_X", epo = epoch)
     def eval_code(self, c_E, C_Q, 
                   c_ground_truth,
                   epoch = None):
@@ -222,7 +261,13 @@ class Evaluation():
         fig = plt.figure(figsize=(12, 8), 
             dpi = 600) 
         axes = fig.subplots()
-
+        if x1.shape[-1] == 1:
+            temp = np.zeros_like(x1)
+            x1 = np.concatenate((x1,temp), axis = 1)
+        if x2.shape[-1] == 1:
+            temp = np.zeros_like(x1)
+            x2 = np.concatenate((x2,temp), axis = 1)
+            
         if  aux is None:
             axes.scatter(x = x1[:,0], y= x1[:,1], 
                     s=30, color="red" , cmap="Spectral", alpha = 0.5, label = labels[0]) # , edgecolors= "black"
@@ -248,6 +293,9 @@ class Evaluation():
         
     def structural_plot(self, x1, aux ,
                         aux_name="", path= '', plotname = '', epo = ''):
+        if x1.shape[-1] == 1:
+            temp = np.zeros_like(x1)
+            x1 = np.concatenate((x1,temp), axis = 1)
         fig = plt.figure(figsize=(12, 8), 
             dpi = 600) 
         axes = fig.subplots()
@@ -331,6 +379,32 @@ class Evaluation():
     def recon_plot(self, x, y, label = ["",""], epoch = "", title = ""):
         x= x[:,:2].detach().cpu().numpy()
         y = y[:,:2].detach().cpu().numpy()
+        
+        for c in range(x.shape[-1]):
+            fig = plt.figure(figsize=(12, 8), 
+                            dpi = 600) 
+            axes = fig.subplots()
+            axes.plot(x[:,c], c = "blue", linewidth=1, alpha=1, label = label[0])
+            axes.plot(y[:,c], c = "red", linewidth=1, alpha=0.7, ls = "--", label = label[1])
+
+            plt.xlabel("Time", fontsize=20, fontweight='bold')
+            plt.ylabel("Magnitude", fontsize=20, fontweight='bold')
+            plt.xticks(fontweight='bold', fontsize = 20)   
+            plt.yticks(fontweight='bold', fontsize = 20)
+            legend = axes.legend(fontsize=20, loc='upper center', bbox_to_anchor=(0.5, 1.1))
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.data_pics, f"{title}_channel_{c}_epoch{epoch}.png" ))    
+            plt.clf()   
+            plt.close(fig)
+
+            if c > 6:
+                break;
+    def forecasting_plot(self, x, pred, y, label = ["",""], epoch = "", title = ""):
+        W, T, dx = x.shape
+        H, T, dx = pred.shape
+        # TODO Check how to plot this from the original ocir code  
+        pred_x = torch.concat((x.view(-1,dx), pred.view(-1,dx)), dim = 0).detach().cpu().numpy() # Stationarized 
+        y_x = torch.concat((x.view(-1,dx), y.view(-1,dx)), dim = 0).detach().cpu().numpy() # non-stationary
         
         for c in range(x.shape[-1]):
             fig = plt.figure(figsize=(12, 8), 
@@ -500,9 +574,9 @@ class Evaluation():
         self.logger.info(f"Computing plots (epoch = {epoch}) ... ")
         # Latent represenataions
         # Normalize z_h for comparison with the prior (mean 0 std 1)
-        if z_h is not None:
-            z_h = (z_h - z_h.mean(dim = 0, keepdim = True)) / torch.clamp(z_h.std(dim = 0, keepdim = True), min=1e-6) 
-        z_E = (z_E - z_E.mean(dim = 0, keepdim = True)) / torch.clamp(z_E.std(dim = 0, keepdim = True), min=1e-6) 
+        # if z_h is not None:
+        #     z_h = (z_h - z_h.mean(dim = 0, keepdim = True)) / torch.clamp(z_h.std(dim = 0, keepdim = True), min=1e-6) 
+        # z_E = (z_E - z_E.mean(dim = 0, keepdim = True)) / torch.clamp(z_E.std(dim = 0, keepdim = True), min=1e-6) 
         # PCA on z
         if z_h is not None:
             z_h = z_h.detach().cpu().numpy()
@@ -524,3 +598,21 @@ class Evaluation():
         if z_h is not None:
             self.structural_plot(z_h, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "posteriorZ_on_Gaussian_with_time", epo = epoch)
         self.structural_plot(z_E, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "posteriorZ_with_time", epo = epoch)
+        
+    def rul_plot(self, pred, y, title = ""):
+        fig = plt.figure(figsize=(12, 8), 
+                            dpi = 600) 
+        axes = fig.subplots()
+        
+        axes.plot(y[:], c = "blue", linewidth=2.5, alpha=1, label = "Ground Truth")
+        axes.plot(pred[:], c = "red", linewidth=2.5, alpha=1.0, ls = "--", label = "Prediction")
+
+        plt.xlabel("Time", fontsize=20, fontweight='bold')
+        plt.ylabel("Remaining useful life", fontsize=20, fontweight='bold')
+        plt.xticks(fontweight='bold', fontsize = 20)   
+        plt.yticks(fontweight='bold', fontsize = 20)
+        legend = axes.legend(fontsize=20, loc='upper right', bbox_to_anchor=(0.5, 1.1))
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.data_pics, f"instance_{title}_rul.png" ))    
+        plt.clf()   
+        plt.close(fig)

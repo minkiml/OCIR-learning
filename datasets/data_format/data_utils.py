@@ -72,20 +72,19 @@ def get_continuous_property(X, stds_ = None,
     continuous_ocs = (np.random.rand(len_) * 2) -1 # [-1,1]
     # continuous_ocs = (np.random.randn(len_))  # N(0,1)
     continuous_ocs = np.expand_dims(continuous_ocs,1)
-    
+    continuous_ocs = np.repeat(continuous_ocs,channel_dim,1)
     
     '''
     Oerating condition for each observation at time t is the same across its channels.
     But, how the same operating condition affects each channel is different
     We do this by randomly permuting chunks of values in the range [-1,1] across the channels
     '''
-    continuous_ocs = np.repeat(continuous_ocs,channel_dim,1)
 
     # We set even number of reference chunks and pair them randomly to get a swapping map for each feature
     if varying:
         if swapping_map is None:
             d_ = True
-            chunks_num = 16
+            chunks_num = 10
             iii = 0
             while d_:
                 chunks = even_chunks(chunks_num)
@@ -109,7 +108,7 @@ def get_continuous_property(X, stds_ = None,
                 check_ = np.all(continuous_ocs[:, np.newaxis, :] == continuous_ocs[:, :, np.newaxis], axis=0)
                 d_ = np.any(check_ & ~np.eye(check_.shape[0], dtype=bool))
                 iii += 1
-                if iii > 6: # if the loop takes too long increases the chunk number
+                if iii > 6: # if the loop takes long increases the chunk number
                     chunks_num += 2
         else:
             for j in range (1,channel_dim):
@@ -139,142 +138,204 @@ def get_continuous_property(X, stds_ = None,
             X[xx] = X[xx] + continuous_ocs[idx_from: idx_to, :]
         else: pass    
         gt_c[xx] = gt_ocs[idx_from: idx_to, :]
+        
+        idx_from = idx_to
     return X, swapping_map, gt_c
 
+def sw_function(x, ocs, w_T):
+    seq_X, seq_ocs= x, ocs  # (L_k, c_x), (L_k, c_ocs), (L_k, c_z)
+    L_k = len(seq_X)
+    
+    # Extract channel dimensions
+    c_x, c_ocs = seq_X.shape[1], seq_ocs.shape[1]
+    
+    # Left padding with first observation + noise
+    pad_x = np.tile(seq_X[0], (w_T - 1, 1)) + np.random.normal(0, 0.02, (w_T - 1, c_x))
+    pad_ocs = np.tile(seq_ocs[0], (w_T - 1, 1))
+    
+    # Padded sequences
+    padded_X = np.vstack([pad_x, seq_X])
+    padded_OCS = np.vstack([pad_ocs, seq_ocs])
+    
+    # Apply sliding window
+    windowed_x_k = np.lib.stride_tricks.sliding_window_view(padded_X, (w_T, c_x)).squeeze(1) # (num_w, leng_w, c)
+    windowed_ocs_k = np.lib.stride_tricks.sliding_window_view(padded_OCS, (w_T, c_ocs)).squeeze(1)
+    
+    # Generate time indices
+    time_index_k = np.arange(1, L_k + 1).reshape(-1, 1)
+    return windowed_x_k, windowed_ocs_k, time_index_k
+
 def sliding_window(X, ocs, rul, w_T, 
-                   H = 3, H_lookback = 1, trajectory = None):
+                   H = 3, H_lookback = 1, trajectory = None,
+                   in_dictionary = False):
     keys = X.keys()
     windowed_X, OCS, RUL = [], [], []
     
     time_indices = []
     
-    # Hypers
-    windowed_X_lookback = []
-    windowed_X_horizon = []
-    windowed_OCS_lookback = []
-    windowed_OCS_horizon = []
-    windowed_tidx_lookback = []
+    RL_rul_sets = dict()
     for key in keys:
-        seq_X, seq_ocs, rul_key = X[key], ocs[key], rul[key]  # (L_k, c_x), (L_k, c_ocs), (L_k, c_z)
-        L_k = len(seq_X)
+        rul_key = rul[key]
+        windowed_x_k, windowed_ocs_k, time_index_k = sw_function(X[key], ocs[key], w_T)
         
-        # Extract channel dimensions
-        c_x, c_ocs = seq_X.shape[1], seq_ocs.shape[1]
+        if not in_dictionary:
+            windowed_X.append(windowed_x_k)
+            OCS.append(windowed_ocs_k)
+            RUL.append(rul_key)
+            time_indices.append(time_index_k)
+        else:
+            RL_rul_sets[key] = {"X": torch.tensor(windowed_x_k, dtype=torch.float32),
+                                "ocs": torch.tensor(windowed_ocs_k, dtype=torch.float32),
+                                "RUL": torch.tensor(rul_key, dtype=torch.float32),
+                                "t_idx": torch.tensor(time_index_k, dtype=torch.long)}
+    if not in_dictionary:
+        # Concatenate all keys together
+        windowed_X = np.concatenate(windowed_X, axis=0)
+        OCS = np.concatenate(OCS, axis=0)
+        RUL = np.concatenate(RUL, axis=0)
+        time_indices = np.concatenate(time_indices, axis=0)
         
-        # Left padding with first observation + noise
-        pad_x = np.tile(seq_X[0], (w_T - 1, 1)) + np.random.normal(0, 0.02, (w_T - 1, c_x))
-        pad_ocs = np.tile(seq_ocs[0], (w_T - 1, 1))
+        RL_rul_sets = {"X": torch.tensor(windowed_X, dtype=torch.float32),
+                    "ocs": torch.tensor(OCS, dtype=torch.float32),
+                    "RUL": torch.tensor(RUL, dtype=torch.float32),
+                    "t_idx": torch.tensor(time_indices, dtype=torch.long)}
+
+    return RL_rul_sets
+def apply_hyper_window(data_dict, H, W, S):
+        """
+        Apply hyper lookback and hyper horizon windows to the windowed sequences.
+    
+        Args:
+            data_dict (dict): Dictionary with keys {1, 2, ..., K}, each containing:
+                - "windowed_X": (N, T, dx)
+                - "windowed_ocs": (N, T, dc)
+                - "windowed_time": (N, 1)
+            H (int): Size of hyper horizon window (future)
+            W (int): Size of hyper lookback window (past)
+            S (int): Stride size (ensures no overlap)
         
-        # Padded sequences
-        padded_X = np.vstack([pad_x, seq_X])
-        padded_OCS = np.vstack([pad_ocs, seq_ocs])
-        
-        # Apply sliding window
-        windowed_x_k = np.lib.stride_tricks.sliding_window_view(padded_X, (w_T, c_x)).squeeze(1) # (num_w, leng_w, c)
-        windowed_ocs_k = np.lib.stride_tricks.sliding_window_view(padded_OCS, (w_T, c_ocs)).squeeze(1)
-        
-        # Generate time indices
-        time_index_k = np.arange(1, L_k + 1).reshape(-1, 1)
-        
-        if trajectory:
-            hyperW_X_lookback, hyperW_X_horizon, hyperW_ocs_lb, hyperW_ocs_horizon, hyperW_tidx  = \
-                                                    hyper_sliding_window(windowed_x_k, windowed_ocs_k, time_index_k,
-                                                               H, H_lookback, w_T, trajectory)
-            windowed_X_lookback.append(hyperW_X_lookback)
-            windowed_X_horizon.append(hyperW_X_horizon)
-            windowed_OCS_lookback.append(hyperW_ocs_lb)
-            windowed_OCS_horizon.append(hyperW_ocs_horizon)
-            windowed_tidx_lookback.append(hyperW_tidx)
+        Returns:
+            hyper_windowed_dict (dict): Dictionary with the new hyper windowed values.
+        """
+        hyper_windowed_dict = {}
+        hyper_lookback_X_all = []
+        hyper_horizon_X_all = []
+        hyper_lookback_ocs_all = []
+        hyper_horizon_time_all = []
+        for key, values in data_dict.items():
+            windowed_X = values["X"]  # (N, T, dx)
+            windowed_ocs = values["ocs"]  # (N, T, dc)
+            windowed_time = values["t_idx"]  # (N, 1)
             
-        # else:
-        #     # Store results
-        windowed_X.append(windowed_x_k)
-        OCS.append(windowed_ocs_k)
-        RUL.append(rul_key)
-        time_indices.append(time_index_k)
-        
-    # Concatenate all keys together
-    windowed_X = np.concatenate(windowed_X, axis=0)
-    OCS = np.concatenate(OCS, axis=0)
-    RUL = np.concatenate(RUL, axis=0)
-    time_indices = np.concatenate(time_indices, axis=0)
+            N, T, dx = windowed_X.shape
+            dc = windowed_ocs.shape[-1]
     
-    RL_rul_sets = {"X": torch.tensor(windowed_X, dtype=torch.float32),
-                "ocs": torch.tensor(OCS, dtype=torch.float32),
-                "RUL": torch.tensor(RUL, dtype=torch.float32),
-                "t_idx": torch.tensor(time_indices, dtype=torch.long)}
-    
-    if trajectory:
-        windowed_X_lookback = np.concatenate(windowed_X_lookback, axis=0)
-        windowed_X_horizon = np.concatenate(windowed_X_horizon, axis=0)
-        windowed_OCS_lookback = np.concatenate(windowed_OCS_lookback, axis=0)
-        windowed_OCS_horizon = np.concatenate(windowed_OCS_horizon, axis=0)
-        windowed_tidx_lookback = np.concatenate(windowed_tidx_lookback, axis=0)
-        trajectory_sets = {"X_lookback": torch.tensor(windowed_X_lookback, dtype=torch.float32),
-                           "ocs_lookback": torch.tensor(windowed_OCS_lookback, dtype=torch.float32),
-                           "t_idx_lookback": torch.tensor(windowed_tidx_lookback, dtype=torch.long),
-                           "X_horizon": torch.tensor(windowed_X_horizon, dtype=torch.float32),
-                           "ocs_horizon": torch.tensor(windowed_OCS_horizon, dtype=torch.float32)}
-    else:
-        trajectory_sets = None
-    return RL_rul_sets, trajectory_sets
+            # Compute the number of hyper windows M
+            M = (N + S - 1) // S  # Equivalent to ceil(N / S)
+            
+            # Right pad `windowed_X` to ensure last window is included
+            
+            pad_size = (M * S) - N
+            windowed_X_padded = np.pad(windowed_X, ((0, pad_size), (0, 0), (0, 0)), mode="edge")
+            windowed_ocs_padded = np.pad(windowed_ocs, ((0, pad_size), (0, 0), (0, 0)), mode="edge")
+            windowed_time_padded = np.pad(windowed_time, ((0, pad_size), (0, 0)), mode="edge")
+            
+            print(windowed_X_padded.shape)
+            # Collect hyper lookback and hyper horizon windows
+            
+            start_W = (W - 1) * S
+            end_H = windowed_X_padded.shape[0]
+            
+            hyper_lookback_X = []
+            hyper_horizon_X = []
+            hyper_lookback_ocs = []
+            hyper_horizon_time = []
+             # TODO: we need to make lookback data ascending order
+            for i in range(windowed_X_padded.shape[0]):
+                if i >= start_W:
+                    WX = np.array([windowed_X_padded[i-(S*j)] for j in range(W)]) # (W, T, dx)
+                    WX = np.flip(WX, axis = 0).copy()
+                    WOCS = np.array([windowed_ocs_padded[i-(S*j)] for j in range(W)])
+                    WOCS = np.flip(WOCS, axis = 0).copy()
+                    WTIDX = np.array([windowed_time_padded[i-(S*j)] for j in range(W)])
+                    WTIDX = np.flip(WTIDX, axis = 0).copy()
+                    
+                    if i + (H * S) < end_H:
+                        HX = np.array([windowed_X_padded[i + (j+1)*S] for j in range(H)]) # (H, T, dx)
+                        
+                    else: break;
+                    hyper_lookback_X.append(torch.tensor(WX, dtype=torch.float32))
+                    hyper_horizon_X.append(torch.tensor(HX, dtype=torch.float32))
+                    hyper_lookback_ocs.append(torch.tensor(WOCS, dtype=torch.float32))
+                    hyper_horizon_time.append(torch.tensor(WTIDX, dtype=torch.long))
+            
+            hyper_lookback_X = torch.stack(hyper_lookback_X, dim = 0)
+            hyper_horizon_X = torch.stack(hyper_horizon_X,dim = 0)
+            hyper_lookback_ocs = torch.stack(hyper_lookback_ocs, dim = 0)
+            hyper_horizon_time = torch.stack(hyper_horizon_time,dim = 0)
+            # Store results
+            hyper_lookback_X_all.append(hyper_lookback_X)
+            hyper_horizon_X_all.append(hyper_horizon_X)
+            hyper_lookback_ocs_all.append(hyper_lookback_ocs)
+            hyper_horizon_time_all.append(hyper_horizon_time)
+            
+            hyper_windowed_dict[key] = {
+                "hyper_lookbackwindowed_X": hyper_lookback_X,  # (M, W, T, dx)
+                "hyper_windowed_X": hyper_horizon_X,  # (M, H, T, dx)
+                "hyper_lookbackwindowed_ocs": hyper_lookback_ocs,  # (M, W, T, dc)
+                "hyper_lookbackwindowed_time": hyper_horizon_time,  # (M, W, 1)
+            }
+            
+        hyper_lookback_X_all = torch.concat((hyper_lookback_X_all), dim = 0)
+        hyper_horizon_X_all = torch.concat((hyper_horizon_X_all), dim = 0)
+        hyper_lookback_ocs_all = torch.concat((hyper_lookback_ocs_all), dim = 0)
+        hyper_horizon_time_all = torch.concat((hyper_horizon_time_all), dim = 0)
+        return hyper_windowed_dict, (hyper_lookback_X_all, hyper_horizon_X_all, 
+                                     hyper_lookback_ocs_all, hyper_horizon_time_all)
 
-def hyper_sliding_window(windowed_X, windowed_ocs, time_indices,
-                         H, H_lookback, T, trajectory):
-    # TODO consider feature-based trj and data-based trj 
-    hyperW_X_lookback, hyperW_X_horizon = [], [] 
-    hyperW_OCS_lookback, hyperW_OCS_horizon, hyperW_timeidx = [], [], []
-    
-    # for windowed_X in WX:
-
-    L, c, d = windowed_X.shape
-    if trajectory == "feature":
-        valid_L = L - H  # The index where both B and H windows are valid
-        W_lookback = np.lib.stride_tricks.sliding_window_view(windowed_X[:valid_L], (H_lookback, c, d))[:, :, 0]
-        W_lookback = np.squeeze(W_lookback, axis=1)
-        W_H = np.lib.stride_tricks.sliding_window_view(windowed_X[H_lookback:valid_L+H_lookback], (H, c, d))[:, :, 0]
-        W_H = np.squeeze(W_H, axis=1)
+def format_testing_data(test_p = None, testing_ocs = None, testing_rul = None,
+                        T = 25, normalize_rul = True, rectification = 125):
+    full_test_set = dict()
+    test_p_list = []
+    test_p_ocs_list = []
+    test_t_list = []
+    for s in (test_p):
+        Length = test_p[s].shape[0]
+        if Length < T:
+            # Some data of the testing machine instances are very short, so left-padding is applied 
+            num_pad = T - Length
+            left_padding = np.tile(test_p[s][0], (num_pad, 1)) #+ np.random.normal(0, 0.02, (num_pad, test_p[s].shape[1]))
+            test_p[s] = np.vstack([left_padding, test_p[s]])
+            
+            left_padding = np.tile(testing_ocs[s][0], (num_pad, 1))  # + np.random.normal(0, 0.02, (num_pad, testing_ocs[s].shape[1]))
+            testing_ocs[s] = np.vstack([left_padding, testing_ocs[s]])
         
-        ocs_lookback = np.lib.stride_tricks.sliding_window_view(windowed_ocs[:valid_L], (H_lookback, c, d))[:, :, 0]
-        ocs_lookback = np.squeeze(ocs_lookback, axis=1)
-        timeidx_lookback = np.lib.stride_tricks.sliding_window_view(time_indices[:valid_L], (H_lookback, 1))
-        timeidx_lookback  = np.squeeze(timeidx_lookback , axis=1)
+        # Full test set
+        windowed_CM, windowed_ocs, windowed_time = sw_function(test_p[s], testing_ocs[s], T)
+        # Piece-wise linear
+        rul_ = np.flip(np.arange(test_p[s].shape[0]))
+        rul_ += testing_rul[s-1]
+        # Rectifification
+        rul_ = np.where(rul_ > rectification, rectification, rul_)
+        rul_ = rul_.reshape(-1,1)
         
-        hyperW_OCS_horizon = np.lib.stride_tricks.sliding_window_view(windowed_ocs[H_lookback:valid_L+H_lookback], (H, c, d))[:, :, 0]
-        hyperW_OCS_horizon = np.squeeze(hyperW_OCS_horizon, axis=1)
+        if normalize_rul:
+            rul_ = rul_ / rectification
         
+        full_test_set[s] = {"X": torch.tensor(windowed_CM, dtype=torch.float32),
+                            "Y": torch.tensor(rul_, dtype=torch.float32),
+                            "ocs": torch.tensor(windowed_ocs, dtype=torch.float32),
+                            "tidx": torch.tensor(windowed_time, dtype=torch.long)}
         
-        return W_lookback, W_H, ocs_lookback, hyperW_OCS_horizon, timeidx_lookback
-        # print("!!", W_lookback)
-        # hyperW_X_lookback.append((W_lookback))
-        # hyperW_X_horizon.append((W_H))
+        # Last sample in the test set
+        test_p_list.append(test_p[s][None,-T:])
+        test_p_ocs_list.append(testing_ocs[s][None,-T:])
+        test_t_list.append(np.array([test_p[s].shape[0]]).reshape(1,-1))
         
-    elif trajectory == "data":
-        forward_frame_length = (H-1)*T + 1 + T
-        backward_frame_length = (H_lookback-1)*T + 1
-        valid_L = L - forward_frame_length  # The index where both B and H windows are valid
-        if valid_L < backward_frame_length:
-            raise ValueError("Not enough data points to create the desired sliding windows.")
-        for l in range(valid_L):
-            if l+1 < backward_frame_length:
-                continue
-            else: 
-                hyperW_X_lookback.append(windowed_X[None, l+1- backward_frame_length:l+1:T,:,:])
-                hyperW_X_horizon.append(windowed_X[None, l + T:l+forward_frame_length:T, :, :])
-                hyperW_timeidx.append(time_indices[None, l+1- backward_frame_length:l+1:T,:])
-                hyperW_OCS_lookback.append(windowed_ocs[None, l+1- backward_frame_length:l+1:T,:,:])
-                hyperW_OCS_horizon.append(windowed_ocs[None, l + T:l+forward_frame_length:T, :, :])
-                
-        hyperW_X_lookback = np.concatenate((hyperW_X_lookback), axis = 0)
-        hyperW_X_horizon = np.concatenate(hyperW_X_horizon, axis = 0)
-        hyperW_OCS_lookback = np.concatenate((hyperW_OCS_lookback), axis = 0)
-        hyperW_OCS_horizon = np.concatenate(hyperW_OCS_horizon, axis = 0)
-        hyperW_timeidx = np.concatenate((hyperW_timeidx), axis = 0)
-
-        # return hyperW_X_lookback, hyperW_X_horizon
-        return hyperW_X_lookback, hyperW_X_horizon, \
-            hyperW_OCS_lookback, hyperW_OCS_horizon, hyperW_timeidx
-
+    test_p = torch.tensor(np.concatenate((test_p_list), axis = 0), dtype = torch.float32)
+    testing_ocs = torch.tensor(np.concatenate((test_p_ocs_list), axis = 0), dtype = torch.float32)
+    test_t_list = torch.tensor(np.concatenate((test_t_list), axis = 0), dtype = torch.long)
+    return test_p, testing_ocs, test_t_list, full_test_set
 def parse_lr_set(windowed_set):
     return windowed_set["X"], windowed_set["ocs"], windowed_set["RUL"], windowed_set["t_idx"]
 

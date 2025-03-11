@@ -1,6 +1,7 @@
 import torch
 import os
 import numpy as np
+import csv
 import matplotlib.pyplot as plt
 import seaborn as sns; sns.set()
 # Set plt params
@@ -45,7 +46,14 @@ class Logger(object):
                                         argw[1].mean_list, argw[1].std_list, argw[1].norm_list,
                                         argw[2].mean_list, argw[2].std_list, argw[2].norm_list):
                 f.write(f"{val1_mean.item()},{val1_std.item()},{val1_norm.item()},{val2_mean.item()},{val2_std.item()},{val2_norm.item()},{val3_mean.item()},{val3_std.item()},{val3_norm.item()}\n")
-   
+    
+    def savevalues(self, x_): # TODO 
+        # Save the array to the CSV file, appending to the existing file
+        path_ = os.path.join(self.log_train_path, "rul_diff.csv")
+        with open(path_, 'a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(x_)
+
     # get more functions on demand
     def plot_scatter(self, x, y, name_ = "", epo_ = 0):
         # Save 2d scatters (rep)

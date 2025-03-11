@@ -5,17 +5,22 @@ from src.blocks import src_utils
 
 class Linear(nn.Linear):
     def __init__(self, in_features, out_features, 
-                 bias=True, init_relu = False, noraml_small = False):
+                 bias=True, init_relu = False, noraml_small = False, zero = False):
         super(Linear, self).__init__(in_features, out_features, bias)
         self.init_relu = init_relu
         self.noraml_small = noraml_small
+        self.zero = zero
         self._initialize_weights()
         
     def _initialize_weights(self):
         # TODO: need to set bound
         if self.init_relu:
-            # nn.init.kaiming_normal_(self.weight, mode='fan_out', nonlinearity='relu')
+            nn.init.kaiming_normal_(self.weight, mode='fan_out', nonlinearity='relu')
             pass
+            if self.bias is not None:
+                nn.init.zeros_(self.bias)
+        elif self.zero:
+            nn.init.zeros_(self.weight)
             if self.bias is not None:
                 nn.init.zeros_(self.bias)
         else:
@@ -177,25 +182,31 @@ class rnn_decoding(nn.Module):
 
 class wide_decoding(nn.Module):
     '''Use the input z as starting state to propagate'''
-    def __init__(self, dz, dc, hidden_dim = 32, window = 100):
+    def __init__(self, dz, dc, hidden_dim = 32, window = 100, dc2 = 0):
         super(wide_decoding, self).__init__()# TODO 
         self.hidden_dim = hidden_dim
         self.dz = dz
         self.window = window
 
-        self.expansion = Linear(dz, 64 * window, bias=False)
+        self.expansion = Linear(dz + dc2, 64 * window, bias=False)
         self.expansion2 = Linear(64 + dc, hidden_dim, bias=False)
         # self.apply(src_utils.init_gru)
-    def forward(self, z, c = None, zin = None):
+    def forward(self, z, c = None, zin = None, c2 = None):
         N, dz = z.shape
+        if c2 is not None:
+            z = torch.concatenate((z,c2), dim = -1)
+        else:
+            z = z
         z = self.expansion(z)
         z = z.view(N, self.window, 64)
+        z += (torch.randn(z.shape) * 0.15).to(z.device) # TODO 
         # print(z.mean(-1))
+        
         if c is not None:
             z = torch.concatenate((z,c), dim = -1)
         else:
             z = z
-        # print(z[0:2,:,:])
+            
         return self.expansion2(z)
 
 class comb_decoding(nn.Module):
@@ -206,7 +217,7 @@ class comb_decoding(nn.Module):
     def forward(self, z, c = None, zin = None):
         N, dz = z.shape
         z = z.unsqueeze(1).repeat(1,  self.window, 1) # expansion
-        z += (torch.randn(z.shape) * 0.2).to(z.device)
+        z += (torch.randn(z.shape) * 0.04).to(z.device)
         
         if c is not None:
             seqtoken_c = torch.concatenate((z,c), dim = -1)

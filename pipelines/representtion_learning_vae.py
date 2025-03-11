@@ -9,15 +9,22 @@ from pipelines import solver_base
 import util_modules as ut
 import src
 class VAEPipeline(solver_base.Solver):
+    # supervised = True
     def __init__(self, config, logger):
         super(VAEPipeline, self).__init__(config, logger)
         
+        self.supervised = bool(self.conditional)
         
         self.build_dataset()
         self.build_model()
     def __call__(self, validation = True):
         self.validation = validation
-        self.train()
+        if self.required_training:
+            self.train()
+        else:
+            self.vali("validation")
+        self.vae.train(False)
+        return self.vae
     
     def train(self):
         self.logger.info("======================TRAINING BEGINS======================")
@@ -46,17 +53,20 @@ class VAEPipeline(solver_base.Solver):
                 pass 
                 x = x.to(self.device)
                 tidx = tidx.to(self.device)
-                
-                if self.vae.h is None:
-                    loss_R, R = self.vae.Loss_VAE(x, tidx, epoch = epoch+1)
-                else:
-                    if self.dc != 0:
+                if self.dc != 0 or self.supervised:
+                    if self.supervised:
                         if self.c_type == "discrete":
                             ocs = ut.onehot_encoding(ocs, classes= self.dc).to(self.device)
                         else:
                             ocs = ocs.to(self.device)
                     else:
-                        ocs = None
+                        ocs = None#self.vae.f_C.inference(x) # TODO
+                else:
+                    ocs = None
+                        
+                if self.vae.h is None:
+                    loss_R, R = self.vae.Loss_VAE(x, tidx, cond = ocs, epoch = epoch+1)
+                else:
                     loss_R, R = self.vae.L_R(x, tidx, cond = ocs, epoch = epoch+1)
                 opt_R[0].zero_grad()
                 loss_R.backward()
@@ -81,9 +91,9 @@ class VAEPipeline(solver_base.Solver):
                                             loss_kl.avg,
                                             )
             self.logger.info(f"epoch[{epoch+1}/{self.n_epochs}], Loss Rec:{loss_rec.avg: .4f}, Loss KL:{loss_kl.avg: .4f}")
-            
-            if (self.validation) and (((epoch + 1) % vali_at) == 0):
-                self.vali(epoch+1)
+            if vali_at > 0:
+                if (self.validation) and (((epoch + 1) % vali_at) == 0):
+                    self.vali(epoch+1)
         # Save the model at the end
         self.logger.info("Training a VAE is done. Saving the model ...")
         ut.save_model(self.vae, path_ = self.model_save_path, name = "vae")
@@ -102,63 +112,66 @@ class VAEPipeline(solver_base.Solver):
         
         ALL_tidx = []
         ALL_time_tokens = []
-        for i, (x,_, ocs, tidx) in enumerate(self.val_data): 
-            x = x.to(self.device)
-            tidx = tidx.to(self.device)
-
-            # Inference
-            # z_E = self.vae.f_E.encoding(x, tidx)
-            if self.vae.h is None:
-                z_E, log_var, zin = self.vae.f_E(x, tidx)
-                z_E_on_z,_, _ = self.vae.f_E.reparameterization_NF(z_E, log_var)
-                
-                if self.time_embedding:
-                    time_tokens = self.vae.f_E.timeembedding(tidx)
-                    ALL_time_tokens.append(time_tokens)
-                
-                x_rec = self.vae.f_D(z_E, c = None, zin = zin)
-                ALL_ZE.append(z_E)
-                ALL_ZH.append(z_E_on_z)
-                ALL_Z = None
-                # ALL_ZH.append(z_h)
-            
-                # ALL_ZH.append(z_h)
-                # ALL_Z.append(prior_z)
-                ALL_C = None#.append(prior_c_logit if prior_c_logit is not None else prior_c)
-                ALL_Q = None #.append(q_code_mu)
+        with torch.no_grad():
+            for i, (x,_, ocs, tidx) in enumerate(self.val_data if self.val_data else self.training_data): 
+                x = x.to(self.device)
+                tidx = tidx.to(self.device)
                 ALL_CGT.append(ocs)
-                
-                ALL_tidx.append(tidx)
-            else:
-                z_E, log_var, zin = self.vae.f_E(x, tidx)
-                z_H_z0,_, z0 = self.vae.f_E.reparameterization_NF(z_E, log_var)
-                
-                z_H, _, _ = self.vae.f_E.p_h(z0 = z_E)
-                time_tokens = self.vae.f_E.timeembedding(tidx)
-                ALL_CGT.append(ocs)
-                if self.dc != 0:
-                    if self.c_type == "discrete":
-                        ocs = ut.onehot_encoding(ocs, classes= self.dc).to(self.device)
+                if self.dc != 0 or self.supervised:
+                    if self.supervised:
+                        if self.c_type == "discrete":
+                            ocs = ut.onehot_encoding(ocs, classes= self.dc).to(self.device)
+                        else:
+                            ocs = ocs.to(self.device)
                     else:
-                        ocs = ocs.to(self.device)
+                        ocs = None#self.vae.f_C.inference(x)
                 else:
                     ocs = None
-                x_rec = self.vae.f_D(z_H, c = ocs, zin = zin)
+                # Inference
+                # z_E = self.vae.f_E.encoding(x, tidx)
+                if self.vae.h is None:
+                    z_E, log_var, zin = self.vae.f_E(x, tidx)
+                    z_E_on_z,_, _ = self.vae.f_E.reparameterization_NF(z_E, log_var)
+                    
+                    if self.time_embedding:
+                        time_tokens = self.vae.f_E.timeembedding(tidx)
+                        ALL_time_tokens.append(time_tokens)
+                    
+                    x_rec = self.vae.f_D(z_E, c = ocs, zin = zin)
+                    ALL_ZE.append(z_E)
+                    ALL_ZH.append(z_E_on_z)
+                    ALL_Z = None
+                    # ALL_ZH.append(z_h)
                 
-                ALL_ZE.append(z_E)
-                ALL_ZH.append(z_H)
-                if self.time_embedding:
-                    ALL_time_tokens.append(time_tokens)
-                ALL_Z.append(z0)
-                ALL_ZH_Z0.append(z_H_z0)
-                # ALL_ZH.append(z_h)
-            
-                # ALL_ZH.append(z_h)
-                # ALL_Z.append(prior_z)
-                ALL_C = None#.append(prior_c_logit if prior_c_logit is not None else prior_c)
-                ALL_Q = None #.append(q_code_mu)
+                    # ALL_ZH.append(z_h)
+                    # ALL_Z.append(prior_z)
+                    ALL_C = None#.append(prior_c_logit if prior_c_logit is not None else prior_c)
+                    ALL_Q = None #.append(q_code_mu)
+                    # ALL_CGT.append(ocs)
+                    
+                    ALL_tidx.append(tidx)
+                else:
+                    z_E, log_var, zin = self.vae.f_E(x, tidx)
+                    z_H_z0,_, z0 = self.vae.f_E.reparameterization_NF(z_E, log_var)
+                    
+                    z_H, _, _ = self.vae.f_E.p_h(z0 = z_E)
+                    time_tokens = self.vae.f_E.timeembedding(tidx)
+                    x_rec = self.vae.f_D(z_H, c = ocs, zin = zin)
+                    
+                    ALL_ZE.append(z_E)
+                    ALL_ZH.append(z_H)
+                    if self.time_embedding:
+                        ALL_time_tokens.append(time_tokens)
+                    ALL_Z.append(z0)
+                    ALL_ZH_Z0.append(z_H_z0)
+                    # ALL_ZH.append(z_h)
                 
-                ALL_tidx.append(tidx)
+                    # ALL_ZH.append(z_h)
+                    # ALL_Z.append(prior_z)
+                    ALL_C = None#.append(prior_c_logit if prior_c_logit is not None else prior_c)
+                    ALL_Q = None #.append(q_code_mu)
+                    
+                    ALL_tidx.append(tidx)
         # On the last batch
         self.evaluation.recon_plot(x[0,:,:], x_rec[0,:,:], label = ["true", "recon"], epoch = str(epoch))
         # Memory intensive if the total sample size is large
@@ -213,10 +226,11 @@ class VAEPipeline(solver_base.Solver):
         vae = src.VAE(dx=self.dx, dz=self.dz, dc=self.dc, window=self.window, 
                         d_model=self.d_model, num_heads=self.num_heads, z_projection=self.z_projection, 
                         D_projection=self.D_projection, time_emb=self.time_embedding, c_type=self.c_type, 
-                        c_posterior_param=self.c_posterior_param, encoder_E=self.encoder_E, device=self.device)
+                        c_posterior_param=self.c_posterior_param, encoder_E=self.encoder_E, device=self.device,
+                        supervised= self.supervised)
         
         print_model(vae, "VAE")
-        self.vae = ut.load_model(vae, self.model_save_path, "VAE")
+        self.vae, self.required_training = ut.load_model(vae, self.model_save_path, "VAE")
         self.vae.to(self.device)
         
     def get_optimizers(self):

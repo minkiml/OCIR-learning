@@ -131,7 +131,7 @@ class shared_transformer(nn.Module):
         self.num_heads = num_heads
         self.depth = 1
         self.D_projection = D_projection
-        self.pos_enc = SinCosPositionalEncoding(d_model, window + 1)
+        self.pos_enc = SinCosPositionalEncoding(d_model, window + 2)
         self.fE_projection = Conv1by1(dx, d_model)
         transformer_encoder = [TransformerEncoderBlock(embed_dim = d_model, num_heads = self.num_heads,
                                                                     ff_hidden_dim = int(d_model * 3), dropout = 0.15,
@@ -142,15 +142,17 @@ class shared_transformer(nn.Module):
         if D_projection == "spc":
             # BERT-style special token (compressive token) is done as discriminative score for sequence
             self.score_token = nn.Parameter(torch.randn(1,1,d_model) * 0.02)
-            
-    def forward(self, x):
+
+    def forward(self, x, c2_spc = None):
         N = x.shape[0]
         x_emb = x
         x_emb = self.fE_projection(x_emb)
         if (self.D_projection == "spc"):
             score_token = self.score_token.expand(N,-1,-1)
             x_emb = torch.cat((score_token, x_emb), dim = 1)    
-                        
+        if c2_spc is not None:
+            c2_spc = c2_spc.expand(N,-1,-1)
+            x_emb = torch.cat((x_emb, c2_spc), dim = 1) 
         # positional encoding
         x_emb = self.pos_enc(x_emb)
         for layer in self.transformer_encoder:
@@ -159,19 +161,19 @@ class shared_transformer(nn.Module):
 
 class SharedEncoder(nn.Module):
     def __init__(self, dx:int, dz:int, window:int, d_model:int, num_heads:int,
-                 z_projection:str, time_emb:bool,
+                 z_projection:str, time_emb:bool, c2_projection = None
                  ):
         super(SharedEncoder, self).__init__()
         self.z_projection = z_projection
         self.num_heads = num_heads
         self.depth = 2
         self.time_emb = time_emb
-        
+        self.c2_projection = c2_projection
         
         if self.time_emb:
             self.time_embedding = nn.Embedding(num_embeddings= 550, embedding_dim = d_model)
             # src_utils.init_embedding(self.time_embedding)
-        self.pos_enc = SinCosPositionalEncoding(d_model, window + 2)
+        self.pos_enc = SinCosPositionalEncoding(d_model, window + 2 if c2_projection != "spc" else window + 3)
         self.fE_projection = src_utils.Linear(dx, d_model) #transformers.Conv1by1(dx, d_model)
         
         
@@ -199,6 +201,10 @@ class SharedEncoder(nn.Module):
         elif z_projection == "seq":
                 self.compressive_token = nn.Parameter(torch.randn(1,1,d_model))
                 self.projection_zin = src_utils.Linear(d_model, dz )
+                
+        if c2_projection == "spc":
+            # BERT-style special token (compressive token) is done as discriminative score for sequence
+            self.fault_token = nn.Parameter(torch.randn(1,1,d_model))
     def forward(self, x, tidx = None):
         N, L, _ = x.shape
         x_proj = self.fE_projection(x)
@@ -218,7 +224,12 @@ class SharedEncoder(nn.Module):
             # compressive_token = self.compressive_token.repeat(N,1,1) # TODO repeat?
 
             x_emb = torch.cat((compressive_token, x_emb), dim = 1)  
-                    
+        
+        if self.c2_projection == "spc" :
+            fault_token = self.fault_token.expand(N,-1,-1) # TODO repeat?
+            # compressive_token = self.compressive_token.repeat(N,1,1) # TODO repeat?
+
+            x_emb = torch.cat((x_emb, fault_token), dim = 1)              
         # positional encoding
         x_emb = self.pos_enc(x_emb)
         

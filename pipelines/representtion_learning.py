@@ -17,8 +17,12 @@ class RlPipeline(solver_base.Solver):
         self.build_model()
     def __call__(self, validation = True):
         self.validation = validation
-        self.train()
-    
+        if self.required_training:
+            self.train()
+        else:
+            self.vali("validation")
+        self.ocir.train(False)
+        return self.ocir
     def train(self):
         self.logger.info("======================TRAINING BEGINS======================")
         
@@ -59,6 +63,8 @@ class RlPipeline(solver_base.Solver):
         vali_at = self.n_epochs // vali_freq
         # raise NotImplementedError("")
         self.vali("Initial")
+        
+        alpha = self.alpha
         for epoch in tqdm(range(self.n_epochs), desc = "Training OCIR: "):
             self.ocir.train(True)
             if isinstance(self.ocir.prior_z, src.distributions.ContinuousCategorical):
@@ -72,9 +78,14 @@ class RlPipeline(solver_base.Solver):
                 opt_R[0].zero_grad()
                 
                 loss_REC, loss_KL, loss_REC_G = R
+                loss_REC_G *= (1-alpha)
                 loss_REC_G.backward(retain_graph = True)
-                ut.zeroout_gradient([self.ocir.f_E, self.ocir.f_C])
-                loss_vae = loss_REC+ loss_KL
+                ut.zeroout_gradient([self.ocir.f_E, self.ocir.f_C, self.ocir.shared_encoder_layers])
+                
+                if epoch is not None:
+                    annealing = min(self.kl_annealing, epoch / 20)
+                else: annealing = self.kl_annealing
+                loss_vae = alpha * (loss_REC+ (loss_KL* annealing))
                 loss_vae.backward()
                 
                 # loss_R.backward()
@@ -83,24 +94,31 @@ class RlPipeline(solver_base.Solver):
                     
                 # (2)
                 loss_disc, D = self.ocir.L_G_discriminator(x)
+                
+                # loss_disc *= alpha
                 opt_Disc[0].zero_grad()
                 loss_disc.backward()
                 for m in reversed(opt_Disc):
                     if m: m.step()
                 
                 # (3)
+                gamma_q = 0.2 if self.c_type == "discrete" else 0.1
                 loss_G, G = self.ocir.L_G_generator(x)
                 opt_G[0].zero_grad()
                 
                 gen_loss, NLL_loss_Q, cc_loss_z, cc_loss_c = G
                 
-                cc_loss = 0.2 *(cc_loss_z + cc_loss_c)
+                # cc_loss = cc_loss_z + (gamma_q *cc_loss_c) # 0.2 *(cc_loss_c) # 
+                cc_loss = (1- alpha) * (cc_loss_z + cc_loss_c) # 0.2 *(cc_loss_c) # 
+
                 cc_loss.backward(retain_graph = True)
                 ut.zeroout_gradient([self.ocir.G]) # no grad in G wrt cc loss
                 
-                gen_loss = gen_loss + (NLL_loss_Q * 0.1)
+                gen_loss = alpha * (gen_loss + (NLL_loss_Q * gamma_q))
                 gen_loss.backward()
-                
+                ut.zeroout_gradient([self.ocir.shared_net, self.ocir.h])
+                # ut.zeroout_gradient([self.ocir.shared_net])
+
                 # for name, param in self.ocir.f_E.named_parameters():
                 #     if param.grad is not None:
                 #         print(f"Epoch {epoch},F_E-IN-G - {name} grad norm: {param.grad.norm().item()} \n")
@@ -147,8 +165,9 @@ class RlPipeline(solver_base.Solver):
                                             )
             self.logger.info(f"epoch[{epoch+1}/{self.n_epochs}], Loss R:{Loss_R.avg: .4f}, Loss Disc:{Loss_Disc.avg: .4f}, Loss G: {Loss_G.avg: .4f}")
             
-            if (self.validation) and (((epoch + 1) % vali_at) == 0):
-                self.vali(epoch+1)
+            if (vali_at > 0):
+                if (self.validation) and (((epoch + 1) % vali_at) == 0):
+                    self.vali(epoch+1)
         # Save the model at the end
         self.logger.info("Training a OCIR is done. Saving the model ...")
         ut.save_model(self.ocir, path_ = self.model_save_path, name = "OCIR")
@@ -166,52 +185,79 @@ class RlPipeline(solver_base.Solver):
         ALL_ZH = []
         ALL_Z0_E = []
         
+        ALL_Z0G = []
+        ALL_ZpriorG = []
+        
         ALL_CE = []
         ALL_C = []
         ALL_Q = []
         ALL_CGT = []
         
         ALL_tidx = []
-        for i, (x,_, ocs, tidx) in enumerate(self.val_data): 
-            x = x.to(self.device)
-            tidx = tidx.to(self.device)
-            # Inference
-            if self.ocir.shared_encoder_layers is not None:
-                h = self.ocir.shared_encoder_layers(x, tidx)
-                hc = h
-                if (self.z_projection == "spc") or (self.z_projection == "seq"):
-                    hc = hc[:,1:,:]
-                if self.time_embedding:
-                    hc = hc[:,:-1,:]
-            else: 
-                h = x
-                hc = x
-            # z_E = self.ocir.f_E.encoding(h, tidx)
-            mu, log_var, _ = self.ocir.f_E(h, tidx)
-            z_E, _, _ = self.ocir.h(z0 = mu)
-            
-            c_E = self.ocir.f_C.inference(hc, logits = True)
-            x_rec = self.ocir.f_D(z_E, c = c_E, zin = None)
-            # Generation
-            X_gen, set_latent_samples, log_det = self.ocir.G.generation(x.shape[0])
-            q_code_mu = self.ocir.Q.inference(X_gen, logits = True)
-            
-            z_h, prior_z, prior_c, prior_c_logit = set_latent_samples
+        with torch.no_grad():
+            for i, (x,_, ocs, tidx) in enumerate(self.val_data if self.val_data else self.training_data): 
+                x = x.to(self.device)
+                tidx = tidx.to(self.device)
+                # Inference
+                if self.ocir.shared_encoder_layers is not None:
+                    h = self.ocir.shared_encoder_layers(x, tidx)
+                    hc = h
+                    if (self.z_projection == "spc") or (self.z_projection == "seq"):
+                        hc = hc[:,1:,:]
+                    if self.time_embedding:
+                        hc = hc[:,:-1,:]
+                else: 
+                    h = x
+                    hc = x
+                # z_E = self.ocir.f_E.encoding(h, tidx)
+                mu, log_var, _ = self.ocir.f_E(h, tidx)
+                z_H_z0,_, z0 = self.ocir.f_E.reparameterization_NF(mu, log_var)
+                
+                z_E, _, _ = self.ocir.h(z0 = mu)
+                
+                c_E = self.ocir.f_C.inference(hc, logits = True)
+                x_rec = self.ocir.f_D(z_E, c = c_E, zin = None)
+                # Generation
+                X_gen, set_latent_samples, log_det = self.ocir.G.generation(x.shape[0])
+                q_code_mu = self.ocir.Q.inference(X_gen, logits = True)
+                
+                z_h, prior_z, prior_c, prior_c_logit = set_latent_samples
 
-            ALL_ZE.append(z_E)
-            ALL_Z.append(prior_z)
-            ALL_ZH.append(z_h)
-            ALL_Z0_E.append(mu)
-            
-            ALL_C.append(prior_c_logit if prior_c_logit is not None else prior_c)
-            ALL_CE.append(c_E)
-            ALL_Q.append(q_code_mu)
-            ALL_CGT.append(ocs)
-            
-            ALL_tidx.append(tidx)
+
+                if self.ocir.shared_encoder_layers is not None:
+                    h = self.ocir.shared_encoder_layers(X_gen, None)
+                    hc = h
+                    if (self.z_projection == "spc") or (self.z_projection == "seq"):
+                        hc = hc[:,1:,:]
+                    if self.time_embedding:
+                        hc = hc[:,:-1,:]
+                else: 
+                    h = x
+                    hc = x
+                # z_E = self.ocir.f_E.encoding(h, tidx)
+                muG, log_varG, _ = self.ocir.f_E(h, tidx)
+                _,_, z0G = self.ocir.f_E.reparameterization_NF(muG, log_varG)
+
+                ALL_Z0G.append(z0G)
+                ALL_ZpriorG.append(prior_z)
+        
+                ALL_ZE.append(z_E)
+                ALL_Z.append(z0)
+                ALL_ZH.append(z_H_z0)
+                ALL_Z0_E.append(mu)
+                
+                ALL_C.append(prior_c_logit if prior_c_logit is not None else prior_c)
+                ALL_CE.append(c_E)
+                ALL_Q.append(q_code_mu)
+                ALL_CGT.append(ocs)
+                
+                ALL_tidx.append(tidx)
         self.evaluation.recon_plot(x[0,:,:], x_rec[0,:,:], label = ["true", "recon"], epoch = str(epoch))
         self.evaluation.recon_plot(x[0,:,:], X_gen[0,:,:], label = ["true", "gen"], epoch = str(epoch),title = "Gen")
         # Memory intensive if the total sample size is large
+        ALL_Z0G = torch.concatenate((ALL_Z0G), dim = 0)
+        ALL_ZpriorG = torch.concatenate((ALL_ZpriorG), dim = 0)
+        
         ALL_ZE = torch.concatenate((ALL_ZE), dim = 0)
         ALL_Z = torch.concatenate((ALL_Z), dim = 0)
         ALL_ZH = torch.concatenate((ALL_ZH), dim = 0)
@@ -222,18 +268,21 @@ class RlPipeline(solver_base.Solver):
         ALL_CGT = torch.concatenate((ALL_CGT), dim = 0)
         ALL_tidx = torch.concatenate((ALL_tidx), dim = 0)
         # self.logger.info(f"Vali: Loss R:{Loss_R_vali.avg: .4f}, Loss Disc:{Loss_Disc_vali.avg: .4f}, Loss G: {Loss_G_vali.avg: .4f}")
+        # print(f"total samples in vali:  {ALL_CGT.shape[0]}")  10,000 > is good
         max_num = -1
         self.evaluation.qualitative_analysis(ALL_Z[:max_num], ALL_ZH[:max_num], ALL_ZE[:max_num], ALL_Z0_E[:max_num],
                                              ALL_C[:max_num], ALL_CE[:max_num], ALL_CGT[:max_num], ALL_Q[:max_num],
                                              ALL_tidx[:max_num],
                                              discrete = True if self.c_type == "discrete" else False,
-                                             epoch = str(epoch))
+                                             epoch = str(epoch),
+                                             prior_zG = ALL_ZpriorG, Z0G = ALL_Z0G
+                                             )
         # self.evaluation.
         
     def get_optimizers(self):
         # lr constants 
-        cont_R = 0.5
-        cont_Disc = 0.5
+        cont_R = 1.
+        cont_Disc = 0.05
         const_G = 1.
         opt_R, scheduler_R, wd_scheduler_R = ut.opt_constructor(self.scheduler,
                                                                         [self.ocir.f_E,  self.ocir.f_C, self.ocir.f_D, self.ocir.G, self.ocir.shared_encoder_layers], # , self.ocir.h

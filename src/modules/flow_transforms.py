@@ -22,12 +22,13 @@ class LatentFlow(nn.Module):
                  base_distribution = None,
                  nf = "RNVP"): # "MAF" "RNVP"
         super(LatentFlow, self).__init__() 
-        self.num_layers = 12
+        self.num_layers = 6
         # p(z')
         self.base_distribution = base_distribution
         # h0,...,hL 
         self.normalizing_flow = normalizing_flow.NormalizingFlow(nf, dz = dz, 
-                                                                 num_layers= self.num_layers)
+                                                                 num_layers= self.num_layers,
+                                                                 linear_flow= False)
         
     def forward(self, N = None, mu  = None, log_var = None, z0 = None):
         if z0 == None:

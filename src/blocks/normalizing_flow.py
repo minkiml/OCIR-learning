@@ -60,13 +60,13 @@ class st_block(nn.Module):
     '''
     def __init__(self, dz = 10, hidden_dim = 64):
         super(st_block, self).__init__() 
-        self.param_s_t = nn.Sequential(src_utils.Linear(dz, hidden_dim, noraml_small= False ),
-                                       src_utils.Sine(),
-                                    #    nn.LeakyReLU(0.2),
-                                       src_utils.Linear(hidden_dim, hidden_dim, noraml_small= False ),
-                                       src_utils.Sine(),
-                                    #    nn.LeakyReLU(0.2),
-                                       src_utils.Linear(hidden_dim, dz * 2 , noraml_small= False))
+        self.param_s_t = nn.Sequential(src_utils.Linear(dz, hidden_dim, zero= False ),
+                                    #    src_utils.Sine(),
+                                       nn.LeakyReLU(0.2),
+                                       src_utils.Linear(hidden_dim, hidden_dim, zero= False ),
+                                    #    src_utils.Sine(),
+                                       nn.LeakyReLU(0.2),
+                                       src_utils.Linear(hidden_dim, dz * 2 , zero= True))
 
     def forward(self, z):
         return self.param_s_t(z)
@@ -102,14 +102,14 @@ class Linear_flow(nn.Module):
         opposite to those specified in Glow, although this essentially makes no differece 
         (only difference is in the notion of what is taken as input for forward and backward paths)
         '''
-        L_ = self.LF_L * self.mask_L + self.I
-        U_ = self.LF_U * self.mask_U + torch.diag(self.sign_s * torch.exp(self.LF_S))
+        L_ = self.LF_L * self.mask_L.to(z.device) + self.I
+        U_ = self.LF_U * self.mask_U.to(z.device) + torch.diag(self.sign_s * torch.exp(self.LF_S))
         W = self.P @ L_ @ U_ 
         ldj += self.logdet_()
         return z @ W.t(), ldj
     def inverse(self, z_tar, ldj):
-        L_ = self.LF_L * self.mask_L + self.I
-        U_ = self.LF_U * self.mask_U + torch.diag(self.sign_s * torch.exp(self.LF_S))
+        L_ = self.LF_L * self.mask_L.to(z_tar.device) + self.I
+        U_ = self.LF_U * self.mask_U.to(z_tar.device) + torch.diag(self.sign_s * torch.exp(self.LF_S))
         # 1.
         W = self.P @ L_ @ U_ 
         W = W.inverse()
@@ -134,7 +134,7 @@ class CouplingLayer(nn.Module):
         self.network = network
         
         self.scaling_factor = nn.Parameter(torch.zeros(c_in))
-        
+        # self.scale = torch.nn.utils.parametrizations.weight_norm(nn.Linear(c_in, c_in, bias = True))
         
         # Register mask as buffer as it is a tensor which is not a parameter,
         # but should be part of the modules state.
@@ -149,8 +149,9 @@ class CouplingLayer(nn.Module):
         
         # Stabilize scaling output
         s_fac = self.scaling_factor.exp().view(1, -1) # (1, c)
-        s = torch.tanh(s * s_fac)
-                
+        s = torch.tanh(s * s_fac) / s_fac
+        # s = self.scale(torch.tanh(s))
+        
         # Mask outputs (only transform the second part)
         s = s * (1 - self.mask)
         t = t * (1 - self.mask)
@@ -158,6 +159,8 @@ class CouplingLayer(nn.Module):
         # Affine transformation
         z = (z + t) * torch.exp(s) 
         # print("S: ", s[0:2,:])
+        # print("s mu!!:    ", s.mean(dim =-1)[0:10])
+        # print("s std!!:    ", s.std(dim = -1)[0:10])
         ldj += s.sum(dim=[1])
         return z, ldj
     
@@ -169,7 +172,8 @@ class CouplingLayer(nn.Module):
         
         # Stabilize scaling output
         s_fac = self.scaling_factor.exp().view(1, -1) # (1, c)
-        s = torch.tanh(s * s_fac)
+        s = torch.tanh(s * s_fac) / s_fac
+        # s = self.scale(torch.tanh(s))
         
         # s = self.scaling_factor(F.tanh(s))
         s = s * (1 - self.mask)
@@ -183,20 +187,25 @@ class NormalizingFlow(nn.Module):
     def __init__(self, 
                  transform = "MAF",
                  dz = 10,
-                 num_layers = 6): # transforms is a list of flow layers
+                 num_layers = 6,
+                 linear_flow = False): # transforms is a list of flow layers
         super().__init__()
-
-        if transform == "RNVP":
-            flows = [CouplingLayer(network=  st_block(dz, hidden_dim= 128), 
-                            mask = create_checkerboard_mask(h = dz, seq = False, invert=(i%2==1)),
-                            c_in = dz) for i in range(num_layers)] 
+        hidden_dim = 128
+        flows = []
+        for i in range (num_layers):
+            if linear_flow:
+                flows.append(Linear_flow(z_dim = dz))
+                
+            if transform == "RNVP":
+                flows.append(CouplingLayer(network=  st_block(dz, hidden_dim= hidden_dim), 
+                                mask = create_checkerboard_mask(h = dz, seq = False, invert=(i%2==1)),
+                                c_in = dz))
+                # create_checkerboard_mask(h = dz, seq = False, invert=(i%2==1))   create_channel_mask(c_in= dz, seq = False, invert=(i%2==1))
+            elif transform == "MAF":
+                flows.append(maf.MAF(dim = dz, parity = i%2==1, nh = hidden_dim)) 
             
-            # create_checkerboard_mask(h = dz, seq = False, invert=(i%2==1))   create_channel_mask(c_in= dz, seq = False, invert=(i%2==1))
-        elif transform == "MAF":
-            flows = [maf.MAF(dim = dz, parity = i%2==1, nh = 128) for i in range(num_layers)] 
-        
-        elif transform == "IAF":
-            flows = [maf.IAF(dim = dz, parity = i%2==1, nh = 128) for i in range(num_layers)] 
+            elif transform == "IAF":
+                flows.append(maf.IAF(dim = dz, parity = i%2==1, nh = hidden_dim))
             
         self.flows = nn.ModuleList(flows)
     def forward(self, z0):  # z0 -> zK
