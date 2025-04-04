@@ -15,22 +15,22 @@ class Stationarization(object):
                 ocir, 
                 logger):
         super(Stationarization, self).__init__()
-        if config['net'] == "ocir":
-            self.logger = logger
-            self.logger.info("Stationarization is being made ...")
-            self.ocir = ocir
-            self.dc = config['dc']
-            dev = config['gpu_dev']
-            self.device = torch.device(f'cuda:{dev}' if torch.cuda.is_available() else 'cpu')
-            self.logger.info(f"GPU (device: {dev}) used" if torch.cuda.is_available() else 'cpu used')
-            self.evaluation = ut.Evaluation(config['plots_save_path'],
-                                            config['his_save_path'],
-                                            self.logger)
+        # if config['net'] == "ocir":
+        self.logger = logger
+        self.logger.info("Stationarization is being made ...")
+        self.ocir = ocir
+        self.dc = config['dc']
+        dev = config['gpu_dev']
+        self.device = torch.device(f'cuda:{dev}' if torch.cuda.is_available() else 'cpu')
+        self.logger.info(f"GPU (device: {dev}) used" if torch.cuda.is_available() else 'cpu used')
+        self.evaluation = ut.Evaluation(config['plots_save_path'],
+                                        config['his_save_path'],
+                                        self.logger)
                     
-            self.build_dataset(config)
-            self.stationarization_test()
-        else:
-            pass
+        self.build_dataset(config)
+        self.stationarization_test()
+        # else:
+        #     pass
     def stationarization_test(self):
         num_st = 5
         self.ocir.train(False)

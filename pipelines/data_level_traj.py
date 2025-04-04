@@ -323,7 +323,8 @@ class DataTrjPipeline(solver_base.Solver):
                                         c_type=self.c_type, 
                                         pretrained_encoder=deepcopy(trained_extractor.f_E), 
                                         shared_layer = deepcopy(trained_extractor.shared_encoder_layers) if trained_extractor.shared_encoder_layers is not None else None,
-                                        device=self.device)  
+                                        device=self.device,
+                                        code = self.conditional)  
         
         print_model(forecaster, "Data Trajectory")
         self.forecaster, self.required_training = ut.load_model(forecaster, self.model_save_path, "trj")

@@ -111,12 +111,12 @@ class VAE(nn.Module):
         self.kl_annealing = kl_annealing
         self.dc = dc
         # NF transform
-        self.h = None # md.LatentFlow(dz, self.prior_z)
+        self.h = md.LatentFlow(dz, self.prior_z)
         self.shared_encoder_layers = None 
         self.c_type = c_type
         self.f_E = md.LatentEncoder(dx=dx, dz=dz, window=window, d_model=d_model, 
                                     num_heads=num_heads, z_projection=z_projection, 
-                                    time_emb=time_emb, encoder_E=encoder_E, p_h=self.prior_z) 
+                                    time_emb=time_emb, encoder_E=encoder_E, p_h=self.h) 
         if not supervised:
             self.f_C = None
             self.prior_c = None 
@@ -175,10 +175,6 @@ class VAE(nn.Module):
         z0 = eps * stds + mu
         z, logdet, z0 = self.f_E.p_h(z0 = z0)
 
-        if self.f_C:
-            cond = self.f_C(x)
-            # TODO how to reparam?
-        
         # Decoding
         x_rec = self.f_D(z,c = cond, zin = zin, generation = True)
         

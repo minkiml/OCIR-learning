@@ -73,7 +73,7 @@ if __name__ == '__main__':
     
     # Task & data args
     parser.add_argument("--task", type=str, default="RL", choices = ["RL", "rul", 
-                                                                    "stationarization", "data_trj"])
+                                                                    "stationarization", "data_trj", "all"])
     parser.add_argument("--dataset", type=str, default="FD001", choices = {"FD001", "FD002", "FD003", "FD004", "circle"})
     parser.add_argument("--c_type", type=str, default="discrete", help = " This argument is for circle data")
     parser.add_argument("--net", type=str, default="ocir", help = ["ocir", "infogan", "vae", "ae", "ocir_deep"])

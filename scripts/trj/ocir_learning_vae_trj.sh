@@ -29,7 +29,7 @@ do
     --kl_annealing $kl\
     --net vae \
     --task data_trj \
-    --gpu_dev 1 \
+    --gpu_dev 0 \
     --window $W \
     --hyper_lookback 2\
     --H 4 \

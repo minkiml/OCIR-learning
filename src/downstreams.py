@@ -109,9 +109,11 @@ class DataTrajectory(nn.Module):
                     c_type:str, 
                     pretrained_encoder:encoders.LatentEncoder,
                     shared_layer:SharedEncoder, 
-                    device): 
+                    device,
+                    code = False): 
         super(DataTrajectory, self).__init__()
         self.device = device
+        self.code = code
         self.T = T
         self.H = H
         self.W = W
@@ -129,10 +131,12 @@ class DataTrajectory(nn.Module):
     def forward(self, x, tidx = None):
         N, W, T, dx = x.shape
         z, z_logvar = self.encode(x, tidx)
-        # Fixed code 
-        N_c = (N * W, self.T, self.dc)
-        fixed_code = 0.1 if self.c_type == "continuous" else 1
-        c = self.prior_c.sample(N_c, fixed_code)
+        if self.code:
+            # Fixed code 
+            N_c = (N * W, self.T, self.dc)
+            fixed_code = 0.1 if self.c_type == "continuous" else 1
+            c = self.prior_c.sample(N_c, fixed_code)
+        else: c= None
         y, log_var = self.predictor(z, c, tidx)
         return y, log_var
     
@@ -187,5 +191,5 @@ class DataTrajectory(nn.Module):
             log_prob = log_prob.sum(dim=-1)  # Sum over dimensions
             loss_nll_z = -torch.mean(log_prob)
         else:
-            loss_nll_z = F.mse_loss(z_pred, z_y.detach(), reduction = 'sum')# / N
+            loss_nll_z = F.mse_loss(z_pred, z_y.detach(), reduction = 'sum') / N
         return loss_nll, loss_nll_z
