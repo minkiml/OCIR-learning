@@ -32,6 +32,7 @@ class RlPipeline(solver_base.Solver):
                             ('%d', 'itr'),
                             ('%.5f', 'loss_rec'),
                             ('%.5f', 'loss_kl'),
+                            ('%.5f', 'loss_klc'),
                             
                             ('%.5f', 'loss_realD'),
                             ('%.5f', 'loss_fakeD'),
@@ -45,7 +46,8 @@ class RlPipeline(solver_base.Solver):
         Loss_R = ut.Value_averager()
         Loss_Disc = ut.Value_averager()
         Loss_G = ut.Value_averager()
-        
+        Loss_KLC = ut.Value_averager()
+
         # In order to track the losses 
         loss_rec = ut.Value_averager()
         loss_kl = ut.Value_averager()
@@ -72,20 +74,23 @@ class RlPipeline(solver_base.Solver):
             for i, (x,y, ocs, tidx) in enumerate(self.training_data): # TODO 
                 x = x.to(self.device)
                 tidx = tidx.to(self.device)
-
                 # (1)
                 loss_R, R = self.ocir.L_R(x, tidx, epoch = epoch+1)
                 opt_R[0].zero_grad()
                 
-                loss_REC, loss_KL, loss_REC_G = R
+                loss_REC, loss_KL, loss_REC_G, loss_klC = R
                 loss_REC_G *= (1-alpha)
                 loss_REC_G.backward(retain_graph = True)
                 ut.zeroout_gradient([self.ocir.f_E, self.ocir.f_C, self.ocir.shared_encoder_layers])
                 
                 if epoch is not None:
-                    annealing = min(self.kl_annealing, epoch / 20)
+                    annealing = min(self.kl_annealing, epoch +1/ 20)
                 else: annealing = self.kl_annealing
                 loss_vae = alpha * (loss_REC+ (loss_KL* annealing))
+                if self.c_kl:
+                    loss_vae += alpha * (loss_klC * 0.5)
+                else:
+                    loss_klC = torch.tensor(0.)
                 loss_vae.backward()
                 
                 # loss_R.backward()
@@ -109,7 +114,7 @@ class RlPipeline(solver_base.Solver):
                 gen_loss, NLL_loss_Q, cc_loss_z, cc_loss_c = G
                 
                 # cc_loss = cc_loss_z + (gamma_q *cc_loss_c) # 0.2 *(cc_loss_c) # 
-                cc_loss = (1- alpha) * (cc_loss_z + cc_loss_c) # 0.2 *(cc_loss_c) # 
+                cc_loss = (1- alpha) * (cc_loss_z + (cc_loss_c)) # 0.2 *(cc_loss_c) # 
 
                 cc_loss.backward(retain_graph = True)
                 ut.zeroout_gradient([self.ocir.G]) # no grad in G wrt cc loss
@@ -139,6 +144,7 @@ class RlPipeline(solver_base.Solver):
                 Loss_R.update(loss_R.item())
                 Loss_Disc.update(loss_disc.item())
                 Loss_G.update(loss_G.item())
+                Loss_KLC.update(loss_klC.item())
                 
                 loss_rec.update(R[0].item())
                 loss_kl.update(R[1].item())
@@ -154,6 +160,7 @@ class RlPipeline(solver_base.Solver):
                                             i,
                                             loss_rec.avg,
                                             loss_kl.avg,
+                                            Loss_KLC.avg,
                                             
                                             loss_realD.avg,
                                             loss_fakeD.avg,
@@ -195,9 +202,9 @@ class RlPipeline(solver_base.Solver):
         
         ALL_tidx = []
         with torch.no_grad():
-            for i, (x,_, ocs, tidx) in enumerate(self.val_data if self.val_data else self.training_data): 
+            for i, (x,_, ocs, tidx) in enumerate(self.training_data): 
                 x = x.to(self.device)
-                tidx = tidx.to(self.device)
+                tidx = tidx.to(self.device)        
                 # Inference
                 if self.ocir.shared_encoder_layers is not None:
                     h = self.ocir.shared_encoder_layers(x, tidx)
@@ -282,7 +289,7 @@ class RlPipeline(solver_base.Solver):
     def get_optimizers(self):
         # lr constants 
         cont_R = 1.
-        cont_Disc = 0.05
+        cont_Disc = 0.2 if self.c_type == "continous" else 0.1
         const_G = 1.
         opt_R, scheduler_R, wd_scheduler_R = ut.opt_constructor(self.scheduler,
                                                                         [self.ocir.f_E,  self.ocir.f_C, self.ocir.f_D, self.ocir.G, self.ocir.shared_encoder_layers], # , self.ocir.h

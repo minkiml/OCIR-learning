@@ -30,14 +30,16 @@ class OCIR(nn.Module):
                 dx:int = 14, dz:int = 10, dc:int = 6, window:int = 25, d_model:int = 128, 
                 num_heads:int = 4, z_projection:str = "aggregation", D_projection:str = "aggregation", 
                 time_emb:bool = True, c_type:str = "discrete", c_posterior_param:str = "soft", encoder_E:str = "transformer",
+                c_kl = False,
                 device = "cpu"): 
         super(OCIR, self).__init__()
         self.device = device
         self.c_type = c_type
         self.z_projection = z_projection
         self.time_emb = time_emb
+        self.dc = dc
         self.code_posterior_param = c_posterior_param
-        
+        self.c_kl = c_kl
         # Prior Distributions p(z') and p(c)
         self.prior_z = md.DiagonalGaussian(dz, mean = 0, var = 1, device=device)
         # TODO there is distributional mismatch if use gasNLL or implement gaussian one for c 
@@ -62,7 +64,9 @@ class OCIR(nn.Module):
                                           time_emb=time_emb, encoder_E=encoder_E, p_h=self.h, shared_EC= True if self.shared_encoder_layers is not None else False) 
         
         self.f_C = md.CodeEncoder(dx=dx, dc=dc, d_model=d_model, 
-                                        c_type=c_type, c_posterior_param=c_posterior_param, shared_EC= True if self.shared_encoder_layers is not None else False)
+                                        c_type=c_type, c_posterior_param=c_posterior_param, 
+                                        shared_EC= True if self.shared_encoder_layers is not None else False,
+                                        c_kl = c_kl)
         
         # Generator and decoder
         self.G = md.Decoder(dx=dx, dz=dz, dc=dc, window=window, d_model=d_model,
@@ -117,7 +121,11 @@ class OCIR(nn.Module):
         z0 = eps * stds + mu
         z, logdet, z0 = self.f_E.p_h(z0 = z0)
         
-        c, _ = self.f_C(hc)
+        c, c_logvar = self.f_C(hc)
+        
+        if self.c_kl:
+            c = self.f_C.reparameterization(c, c_logvar)
+            
         # Decoding
         x_rec = self.f_D(z,c, zin = zin)
         x_rec_G = self.G(z.detach(),c.detach(), zin = zin)
@@ -151,8 +159,11 @@ class OCIR(nn.Module):
         log_p_z = self.unit_MVG_Guassian_log_prob(z)
         kl_div = torch.mean(log_qz0) - torch.mean(log_p_z)
         
+        if self.c_kl:
+            kl_c = self.mmd_loss(c, self.sample_uniform_prior(c), mode = "kernel")
+        else: kl_c = None
         # x 0.5 as the reconstruction is done through G (shared net) as well 
-        return recon + kl_div, [recon, kl_div, recon_G]
+        return recon + kl_div, [recon, kl_div, recon_G, kl_c]
     
     def L_G_discriminator(self, x):
         sample_size = x.shape[0]
@@ -188,7 +199,8 @@ class OCIR(nn.Module):
             hc = x_gen
         mu, logvar, _ = self.f_E(h)
         c_gen, c_logvar = self.f_C(hc)
-
+        # if self.c_kl:
+        #     c_gen = self.f_C.reparameterization(c_gen, c_logvar)
         # Generator loss
         if gen.dim() == 2:
             gen_loss = 0.5 * torch.mean((gen - 1)**2)    
@@ -238,3 +250,62 @@ class OCIR(nn.Module):
     
     def unit_MVG_Guassian_log_prob(self, sample):
         return -0.5*torch.sum((sample**2 + np.log(2*np.pi)), dim=1)
+    def sample_uniform_prior(self, c):
+        a = -1.
+        b = 1.
+        return torch.rand_like(c) * (b - a) + a
+    def mmd_loss(self, qc, prior_samples, mode = "mean"):
+        """ MMD loss to match q(c) to U(a, b) """
+        if mode == "mean":
+            return torch.mean((qc.mean(dim=0) - prior_samples.mean(dim=0)) ** 2)
+        elif mode == "kernel":
+            N, L, dc = qc.shape
+            def rbf_kernel(x, y, gamma=None):
+                """
+                Compute the Gaussian RBF kernel between two tensors x and y.
+                """
+                N, L, dc = x.shape
+                # Compute pairwise squared Euclidean distance
+                x_sq = torch.sum(x ** 2, dim=-1, keepdim=True).view(-1, 1)  # Shape: -> (N, 1)
+                y_sq = torch.sum(y ** 2, dim=-1, keepdim=True).view(-1, 1)  # Shape: -> (N, 1)
+                dist_sq = x_sq - 2 * torch.mm(x.view(-1,dc), y.view(-1,dc).T) + y_sq.T  # Shape: (N, N)
+                
+                # Default gamma heuristic (median distance)
+                if gamma is None:
+                    gamma = 1.0 / (2.0 * torch.median(dist_sq))  
+                
+                return torch.exp(-gamma * dist_sq)
+            K_qq = rbf_kernel(qc, qc)  # Kernel matrix for q(c)
+            K_pp = rbf_kernel(prior_samples, prior_samples)  # Kernel matrix for p(c)
+            K_qp = rbf_kernel(qc, prior_samples) 
+            return( K_qq.sum() + K_pp.sum() - 2 * K_qp.sum()) / N# consider sum
+    def stationarization(self, x, tidx = None, 
+                         fixed_code = None):
+        if self.shared_encoder_layers is not None:
+            h = self.shared_encoder_layers(x, tidx)
+            hc = h
+            if (self.z_projection == "spc") or (self.z_projection == "seq"):
+                hc = hc[:,1:,:]
+            if self.time_emb:
+                hc = hc[:,:-1,:]
+        else: 
+            h = x
+            hc = x
+        
+        mu, log_var, _ = self.f_E(h)
+        z, _, _ = self.h(z0 = mu)
+        
+        # Fixed code
+        N_c = x.shape[0:-1] + (self.dc,)
+
+        if fixed_code:
+            target = fixed_code
+        else:
+            target = 0.1 if self.c_type == "continuous" else 1
+        fixed_c = self.prior_c.sample(N_c, target = target)
+        
+        # Reconstruction
+        stationarized_X = self.f_D(z, c = fixed_c, generation = True)
+        # Generation
+        stationarized_X_G = self.G(z, c = fixed_c, generation = True)
+        return stationarized_X, stationarized_X_G

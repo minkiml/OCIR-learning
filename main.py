@@ -21,7 +21,7 @@ def Learning_RL(args, logger):
     elif config.net == "ocir_deep":
         learning = pipelines.RlPipeline_deep(args, logger)
     model = learning()
-    pipelines.Stationarization(args, model, logger)
+    pipelines.Stationarization(args, model, logger) # TODO ocir only right now 
     return model
 
 def Learning_RUL(args, logger, encoder = None, shared_layer = None):
@@ -30,10 +30,12 @@ def Learning_RUL(args, logger, encoder = None, shared_layer = None):
     model = learning()
     return model
 
-def Learning_TRJ(args, logger, encoder = None):
+def Learning_TRJ(args, logger, ocir):
     if config.task == "data_trj":
         logger.info(f"********************* Data level trajectory construction Pipeline  *********************")
-        learning = pipelines.DataTrjPipeline(args, logger)
+        learning = pipelines.DataTrjPipeline(args, logger, ocir)
+        model = learning()
+        return model
     else:
         raise NotImplementedError("")
     
@@ -42,28 +44,29 @@ def main(args, logger):
         rl_model = Learning_RL(args, logger)
         
     elif config.task == "rul":
-        encoder = None
-        shared_layer = None
-        if os.path.exists(os.path.join(config.model_save_path, 'rul_cp.pth')):
-            pass
-        else:
-            # Load a traied encoder if available, otherwise will train one first 
-            rl_model = Learning_RL(args, logger)
-            encoder = deepcopy(rl_model.f_E)
-            if rl_model.shared_encoder_layers:
-                shared_layer = deepcopy(rl_model.shared_encoder_layers)
-                
-        rul_model = Learning_RUL(args, logger, encoder, shared_layer)
+        # encoder = None
+        # shared_layer = None
+        # if os.path.exists(os.path.join(config.model_save_path, 'rul_cp.pth')):
+        #     pass
+        # else:
+        #     # Load a traied encoder if available, otherwise will train one first 
+        #     rl_model = Learning_RL(args, logger)
+        #     encoder = deepcopy(rl_model.f_E)
+        #     if rl_model.shared_encoder_layers:
+        #         shared_layer = deepcopy(rl_model.shared_encoder_layers)
+        rl_model = Learning_RL(args, logger)
+        rul_model = Learning_RUL(args, logger, rl_model, None)
         
     elif (config.task == "data_trj"):
-        Learning_TRJ(args, logger)
+        rl_model = Learning_RL(args, logger)
+        trj_model = Learning_TRJ(args, logger, rl_model)
         
     return None
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--log_path", type=str, default='./Logs/logs_', help="path to save all the products from each trainging")
+    parser.add_argument("--log_path", type=str, default='./Logss/logs_', help="path to save all the products from each trainging")
     parser.add_argument("--id_", type=int, default=0, help="Run id")
     parser.add_argument("--data_path", type=str, default='./datasets/cmapss_dataset', help="path to grab data")
     parser.add_argument("--description", type=str, default='test_run', help="optional")
@@ -85,9 +88,11 @@ if __name__ == '__main__':
     
     parser.add_argument("--rul_epochs", type=int, default=50)
     parser.add_argument("--fore_epochs", type=int, default=50)
-
+    parser.add_argument("--fore_batch", type=int, default=128)
     # optimizer
     parser.add_argument("--lr_", type=float, default=5e-4, help= "learning rate")
+    parser.add_argument("--rul_lr", type=float, default=5e-4, help= "learning rate for rul")
+    parser.add_argument("--trj_lr", type=float, default=5e-4, help= "learning rate for trj")
     parser.add_argument("--scheduler", type=int, default=0)
     parser.add_argument("--alpha", type=float, default=0.8)
     parser.add_argument("--kl_annealing", type=float, default=0.15)
@@ -110,13 +115,13 @@ if __name__ == '__main__':
     parser.add_argument("--H", type=int, default=2)
     parser.add_argument("--hyper_lookback", type=int, default=2)
     parser.add_argument("--time_embedding", type=bool, default=False)
-    parser.add_argument("--mmi", type=int, default=0, help = "explicit mutual information I(z;c) minimization")
+    parser.add_argument("--c_kl", type=int, default=0, help = "kl div for f_C")
     
     parser.add_argument("--dx", type=int, default=14)
     parser.add_argument("--dz", type=int, default=20)
     parser.add_argument("--dc", type=int, default=6, help = "if discrete, it is the expected number of ocs")
     parser.add_argument("--d_model", type=int, default=128)
-    parser.add_argument("--num_heads", type=int, default=4)
+    parser.add_argument("--num_heads", type=int, default=2)
     
     ## Latent encoder
     parser.add_argument("--encoder_E", type=str, default="transformer", choices= ["transformer", "TCN"])

@@ -33,11 +33,14 @@ class LatentEncoder(nn.Module):
                 self.fE_projection = src_utils.Linear(dx, d_model) #transformers.Conv1by1(dx, d_model)
 
                 TransformerEncoder = [transformers.TransformerEncoderBlock(embed_dim = d_model, num_heads = self.num_heads,
-                                                                ff_hidden_dim = int(d_model * 3), dropout = 0.10,
+                                                                ff_hidden_dim = int(d_model * 3), dropout = 0.1,
                                                                 prenorm =True) for _ in range(self.depth)]
                 self.TransformerEncoder = nn.ModuleList(TransformerEncoder)
             else:
-                self.TransformerEncoder = self.make_MLP()
+                TransformerEncoder = [transformers.TransformerEncoderBlock(embed_dim = d_model, num_heads = self.num_heads,
+                                                                ff_hidden_dim = int(d_model * 3), dropout = 0.1,
+                                                                prenorm =True) for _ in range(self.depth)]
+                self.TransformerEncoder = nn.ModuleList(TransformerEncoder) #self.make_MLP()
             # (N, L, C) -> (N, C)
             if z_projection == "aggregation":
                 self.latent_aggregation = transformers.Aggregation(d_model, method = 'weighted')
@@ -55,10 +58,10 @@ class LatentEncoder(nn.Module):
                 self.latent_aggregation = transformers.Aggregation_all(d_model, window + 1 if self.time_emb else window)
                 
         if p_h is None:
-            self.mu = src_utils.Linear(d_model, dz , bias=False) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(d_model, dz , bias=False))
+            self.mu = src_utils.Linear(d_model, dz , bias=True) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(d_model, dz , bias=True))
         else:
-            self.mu = src_utils.Linear(d_model, dz , bias=False) #torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(d_model, dz , bias=False))
-            self.logvar = src_utils.Linear(d_model, dz , bias=False) #torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(d_model, dz , bias=False))
+            self.mu =   src_utils.Linear(d_model, dz , bias=True) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(d_model, dz , bias=True))
+            self.logvar = src_utils.Linear(d_model, dz , bias=True) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(d_model, dz , bias=True))
 
         self.p_h = p_h
     def forward(self, x, tidx = None):
@@ -92,9 +95,10 @@ class LatentEncoder(nn.Module):
                 
         else:
             x_emb = x
-            x_emb = self.TransformerEncoder(x_emb)
-            
-            
+            for layer in self.TransformerEncoder:
+                x_emb = layer(x_emb)
+            # x_emb = self.TransformerEncoder(x_emb)
+
         if self.z_projection == "spc":
             z = x_emb[:,0,:] # (N, d_modle)
             z_in = None
@@ -160,14 +164,15 @@ class LatentEncoder(nn.Module):
         
     def make_MLP(self):
         mlp = nn.Sequential(src_utils.Linear(self.d_model, self.d_model),
-                            # nn.LeakyReLU(0.2),
-                            # src_utils.Linear(self.d_model, self.d_model)
+                            nn.LeakyReLU(0.2),
+                            src_utils.Linear(self.d_model, self.d_model)
                             )
         return mlp 
 class CodeEncoder(nn.Module):
     def __init__(self, dx:int, dc:int,
                  d_model:int, c_type:str, c_posterior_param:str,
-                 shared_EC = False
+                 shared_EC = False,
+                 c_kl = False
                  ): 
         super(CodeEncoder, self).__init__() 
         self.dx = dx
@@ -199,10 +204,11 @@ class CodeEncoder(nn.Module):
         elif c_type == "continuous":
             # soft fitting
             if self.c_posterior_param == "soft":
-                self.code_mu_logvar = src_utils.Linear(self.d_model_c, self.dc * 2, bias=False) #torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(self.d_model_c, self.dc * 2, bias=False))
+                self.code_mu = src_utils.Linear(d_model, self.dc, bias=False) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(self.d_model_c, self.dc * 2, bias=False))
+                self.code_logvar = src_utils.Linear(d_model, self.dc, bias=False)
             # hard fitting
             else: 
-                self.code_mu = src_utils.Linear(self.d_model_c,self.dc, bias=False) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(self.d_model_c,self.dc, bias=False))
+                self.code_mu =  src_utils.Linear(self.d_model_c,self.dc, bias=False) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(self.d_model_c,self.dc, bias=False))
 
     def forward(self, x):
         N, L, c = x.shape
@@ -220,9 +226,11 @@ class CodeEncoder(nn.Module):
             return logit.view(N,L,self.dc), None
         elif self.c_type == "continuous":
             if self.c_posterior_param == "soft":
-                code_emb = self.code_mu_logvar(code_emb)
-                mu, log_var = torch.chunk(code_emb, 2, dim=-1)
-                # mu = torch.clamp(mu, min=-1.5, max=1.5)
+                # code_emb = self.code_mu_logvar(code_emb)
+                # mu, log_var = torch.chunk(code_emb, 2, dim=-1)
+                mu = self.code_mu(code_emb)
+                log_var = self.code_logvar(code_emb)
+                # mu = torch.clamp(mu, min=-1., max=1.)
                 # log_var = torch.clamp(log_var, min=-4, max=0) # TODO not limit?
                 # mu = torch.clamp(mu, min=-1.5, max=1.5)
                 # log_var = torch.clamp(log_var, min=-4, max=0)
@@ -230,7 +238,7 @@ class CodeEncoder(nn.Module):
             
             else:
                 mu = self.code_mu(code_emb)
-                # mu = torch.clamp(mu, min=-1.5, max=1.5)
+                # mu = torch.clamp(mu, min=-1., max=1.)
                 # mu = torch.clamp(mu, min=-1.5, max=1.5)
                 return mu.view(N,L,self.dc), None
         
@@ -240,6 +248,15 @@ class CodeEncoder(nn.Module):
             return torch.argmax(self.softmax(c),dim = -1, keepdim=True) if not logits else c #  
         else:
             return c
+    def reparameterization(self, mu, log_var):
+        
+        std = torch.exp(0.5 * log_var)
+        eps = torch.randn_like(std)
+        c = mu + eps * std  # Gaussian sample
+
+        # Apply truncation to approximate uniform distribution
+        c = torch.clamp(c, min=-1, max=1)
+        return c
     def make_MLP(self):
         mlp = nn.Sequential(src_utils.Linear(self.d_model_c, self.d_model_c),
                             nn.LeakyReLU(0.2),

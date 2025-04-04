@@ -44,34 +44,16 @@ class Stationarization(object):
             for ii in tqdm(indx, desc = "Stationarization ... "):
                 x = self.training_data[ii]["X"].to(self.device)
                 tidx = self.training_data[ii]["t_idx"].to(self.device)
-                if self.ocir.shared_encoder_layers is not None:
-                    h = self.ocir.shared_encoder_layers(x, tidx)
-                    hc = h
-                    if (self.ocir.z_projection == "spc") or (self.ocir.z_projection == "seq"):
-                        hc = hc[:,1:,:]
-                    if self.ocir.time_emb:
-                        hc = hc[:,:-1,:]
-                else: 
-                    h = x
-                    hc = x
+                stationarized_X, stationarized_X_from_G = self.ocir.stationarization(x, tidx)
+                x = x[:,-1,:] 
                 
-                mu, log_var, _ = self.ocir.f_E(h)
-                z, _, _ = self.ocir.h(z0 = mu)
-                
-                # Fixed code
-                N_c = x.shape[0:-1] + (self.dc,)
-
-                fixed_c = self.ocir.prior_c.sample(N_c, target = 0.1 if self.ocir.c_type == "continuous" else 1)
-                
-                # Reconstruction
-                stationarized_X = self.ocir.f_D(z, c = fixed_c, zin = None, generation = True)
                 stationarized_X = stationarized_X[:,-1,:] # un-windowing
-                stationarized_X_from_G = self.ocir.G(z, c = fixed_c, zin = None, generation = True)
-                stationarized_X_from_G = stationarized_X_from_G[:,-1,:]
-                
-                x = x[:,-1,:]
-                self.evaluation.recon_plot(x, stationarized_X, label = ["true", "stationarization - f_D"], epoch = str(ii), title = "st_Dec")
-                self.evaluation.recon_plot(x, stationarized_X_from_G, label = ["true", "stationarization - G"], epoch = str(ii), title = "st_Gen")
+                self.evaluation.recon_plot(x, stationarized_X, label = ["Observed",  r"Stationarized"], 
+                                           epoch = str(ii), title = "st_Dec", plot_s = True)
+                if stationarized_X_from_G is not None:
+                    stationarized_X_from_G = stationarized_X_from_G[:,-1,:]
+                    self.evaluation.recon_plot(x, stationarized_X_from_G, label = ["Observed",  r"Stationarized"], 
+                                               epoch = str(ii), title = "st_Gen", plot_s = True)
     def build_dataset(self, config):
         # Dataset instantiation
         if config['dataset'] == "circle": 

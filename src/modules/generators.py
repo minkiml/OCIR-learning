@@ -77,13 +77,12 @@ class Decoder(nn.Module):
             # At Inference where the arg c is logit inferred by f_C
             if c is not None:
                 if isinstance(self.p_c, distributions.DiscreteUniform):
-                    c = F.softmax(c,dim = -1).detach()
-                elif isinstance(self.p_c, distributions.ContinuousCategorical):
-                    c = self.p_c.gumbel_softmax(c)
+                    c = F.softmax(c,dim = -1)#.detach()
                 elif isinstance(self.p_c, distributions.UniformDistribution):
-                    c = c.detach()
+                    c = c#.detach()
                 else:
-                    c = c.detach()
+                    c = c#.detach()
+                    
                 if c2 is not None:
                     if isinstance(self.p_c2, distributions.DiscreteUniform):
                         c2 = F.softmax(c2,dim = -1).detach()

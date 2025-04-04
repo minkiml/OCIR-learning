@@ -5,9 +5,10 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 import seaborn as sns; sns.set()
-
+from statsmodels.graphics.tsaplots import plot_acf
 from util_modules import Metrics, utils
 from sklearn.decomposition import PCA
+from matplotlib.ticker import MaxNLocator
 import torch.nn.functional as F
 import warnings
 warnings.simplefilter("ignore", UserWarning)
@@ -52,13 +53,35 @@ def onehot_encoding(c, classes):
 def zeroout_gradient(layers_):
     # Zero out the gradients in layer b computed with respect to out_B 
     for net in layers_:
-        for param in net.parameters():
-            if param.grad == None:
-                pass
-            else:
-                param.grad = torch.zeros_like(param.grad)
+        if net:
+            for param in net.parameters():
+                if param.grad == None:
+                    pass
+                else:
+                    param.grad = torch.zeros_like(param.grad)
 
-
+def ACF_(x_, lag = 30, i = 1, c = 1,
+         path_ = None):
+    '''
+    This function is to examine auto-correlation of the input time series x
+    x is in shape (sequence len, feature)
+    '''
+    # x_ is input NS time series
+    fig = plt.figure(figsize=(12, 8), 
+            dpi = 600) 
+    # axes = fig.subplots()
+    plot_acf(x_, lags = lag, title = '',)
+    plt.xlabel("Lag",fontsize= 25)
+    plt.ylabel("Pearson’s correlation coefficient",fontsize= 25)
+    plt.xticks( fontsize= 25)   
+    plt.yticks( fontsize= 25)
+    plt.tight_layout()
+    if path_:
+        plt.savefig(path_) 
+    else:    
+        plt.show()
+    plt.clf()   
+    plt.close(fig)
 class Evaluation():
     def __init__(self, plot_path, 
                  hist_path,
@@ -130,8 +153,10 @@ class Evaluation():
         prior_z, z_h = pca.transform(prior_z), pca.transform(z_h)
 
         pca = PCA(n_components=2)
-        pca.fit(np.concatenate((z_E, z0_E), axis = 0))
-        z_E, z0_E = pca.transform(z_E), pca.transform(z0_E)
+        pca.fit(z0_E)
+        z0_E = pca.transform(z0_E)
+        pca.fit(z_E)
+        z_E = pca.transform(z_E)
         # prior_z, z_h, z_E = pca.transform(prior_z), pca.transform(z_h), pca.transform(z_E)
         
         # pca.fit(z_E)
@@ -345,7 +370,28 @@ class Evaluation():
             plt.savefig(os.path.join(path,plotname+f"dim({ii})_{epo}.png" )) 
             plt.clf()   
             plt.close(fig)
-        
+    def c_plot(self, x):
+        fig = plt.figure(figsize=(12, 8), 
+                        dpi = 600) 
+        axes = fig.subplots()
+        for i in range (1,x.shape[-1]):
+            axes.plot(x[:,0], x[:,i], linewidth=1., alpha=1.)
+            
+        plt.xlabel(r"$c_{t,1}$", fontsize=20, fontweight='bold')
+        plt.ylabel(r"$c_{t,2} \sim c_{t,d_x}$", fontsize=20, fontweight='bold')
+        plt.xticks(fontweight='bold', fontsize = 20)   
+        plt.yticks(fontweight='bold', fontsize = 20)
+        # legend = axes.legend(fontsize=20, loc='upper center', bbox_to_anchor=(0.5, 1.1),
+        #                         edgecolor='black', facecolor='white',
+        #                     frameon=True,  # Ensures the frame is on
+        #                     framealpha=1,  # Makes the frame completely opaque
+        #                     fancybox=True)
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.data_pics, f"c_map.png" ))    
+        plt.clf()   
+        plt.close(fig)
+
     def line_plot(self, x, y = None, label = "", inst = 1, instant = 0):
         N = len(x)
         if instant == 0:
@@ -355,77 +401,206 @@ class Evaluation():
         
         else:
             indx = [instant]
-    
+        
         for i in indx:
             X = x[i]
             for c in range(X.shape[1]):
                 fig = plt.figure(figsize=(12, 8), 
                                 dpi = 600) 
                 axes = fig.subplots()
-                axes.plot(X[:,c], c = "blue", linewidth=1, alpha=1, label = label)
+                axes.plot(X[:,c], c = "blue", linewidth=2, alpha=1, label = label)
+                
+                plt.xlabel("Time", fontsize=25)
+                plt.ylabel("Magnitude", fontsize=25) # , fontweight='bold'
+                plt.xticks(fontsize = 25)   
+                plt.yticks(fontsize = 25)
+                # legend = axes.legend(fontsize=20, loc='upper center', bbox_to_anchor=(0.5, 1.1),
+                #                      edgecolor='black', facecolor='white',
+                #                     frameon=True,  # Ensures the frame is on
+                #                     framealpha=1,  # Makes the frame completely opaque
+                #                     fancybox=True)
+                axes.yaxis.set_major_locator(MaxNLocator(integer=True))
+                plt.tight_layout()
+                plt.savefig(os.path.join(self.data_pics, f"{label}_machine{i}_channel_{c}.png" ))    
+                plt.clf()   
+                plt.close(fig)
+                ACF_(X[:,c], i = i, c = c, 
+                     path_ = os.path.join(self.data_pics, f"{label}_machine{i}_channel_{c}_acf.png" ))
+                if c > 3:
+                    break;
+    def recon_plot(self, x, y, label = ["",""], epoch = "", title = "", plot_s = False):
+        x= x[:,:].detach().cpu().numpy()
+        y = y[:,:].detach().cpu().numpy()
+        channel_to_plot = [5,6, 1, 2] # 9
+        for c in range(x.shape[-1]):
+            if c in channel_to_plot:
+                fig = plt.figure(figsize=(12, 8), 
+                                dpi = 600) 
+                axes = fig.subplots()
+                axes.plot(x[:,c], c = "red", linewidth=2.5, alpha=1, label = label[0])
+                axes.plot(y[:,c], c = "green", linewidth=3.5, alpha=1.0, label = label[1])
+
+                plt.xlabel("Time", fontsize=20, fontweight='bold')
+                plt.ylabel("Magnitude", fontsize=20, fontweight='bold')
+                plt.xticks(fontweight='bold', fontsize = 20)   
+                plt.yticks(fontweight='bold', fontsize = 20)
+                legend = axes.legend(fontsize=20, loc='upper center', #bbox_to_anchor=(0.5, 1.1),
+                                     edgecolor='black', facecolor='white',
+                                    frameon=True,  # Ensures the frame is on
+                                    framealpha=1,  # Makes the frame completely opaque
+                                    fancybox=True)
+                plt.tight_layout()
+                plt.savefig(os.path.join(self.data_pics, f"{title}_channel_{c}_epoch{epoch}.png" ))    
+                plt.clf()   
+                plt.close(fig)
+                
+                if plot_s:
+                    fig = plt.figure(figsize=(12, 8), 
+                                dpi = 600) 
+                    axes = fig.subplots()
+                    axes.plot(x[:,c], c = "red", linewidth=2.5, alpha=1, label = label[0])
+                    plt.xlabel("Time", fontsize=20, fontweight='bold')
+                    plt.ylabel("Magnitude", fontsize=20, fontweight='bold')
+                    plt.xticks(fontweight='bold', fontsize = 20)   
+                    plt.yticks(fontweight='bold', fontsize = 20)
+                    legend = axes.legend(fontsize=20, loc='upper center', #bbox_to_anchor=(0.5, 1.1),
+                                        edgecolor='black', facecolor='white',
+                                        frameon=True,  # Ensures the frame is on
+                                        framealpha=1,  # Makes the frame completely opaque
+                                        fancybox=True)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(self.data_pics, f"{title}_original_channel_{c}_epoch{epoch}.png" ))    
+                    plt.clf()   
+                    plt.close(fig)
+                    
+                    fig = plt.figure(figsize=(12, 8), 
+                                dpi = 600) 
+                    axes = fig.subplots()
+                    axes.plot(y[:,c], c = "green", linewidth=2.5, alpha=1.0, label = label[1])
+                    plt.xlabel("Time", fontsize=20, fontweight='bold')
+                    plt.ylabel("Magnitude", fontsize=20, fontweight='bold')
+                    plt.xticks(fontweight='bold', fontsize = 20)   
+                    plt.yticks(fontweight='bold', fontsize = 20)
+                    legend = axes.legend(fontsize=20, loc='upper center', #bbox_to_anchor=(0.5, 1.1),
+                                        edgecolor='black', facecolor='white',
+                                        frameon=True,  # Ensures the frame is on
+                                        framealpha=1,  # Makes the frame completely opaque
+                                        fancybox=True)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(self.data_pics, f"{title}_Stated_channel_{c}_epoch{epoch}.png" ))    
+                    plt.clf()   
+                    plt.close(fig)
+    def forecasting_plot(self, x, pred, x_sta, 
+                         t_pred, t_sta, uncertainty, epoch = "", title = "",
+                         num_channel = 2):
+        lw = 2.5
+        channel_to_plot = [5,6, 1, 2] # 9
+        last_t = x.shape[0]
+        
+        upper_bound_pred = pred + uncertainty
+        lower_bound_pred = pred - uncertainty
+        for c in range(x.shape[-1]):
+            if c in channel_to_plot:
+                fig = plt.figure(figsize=(12, 8), 
+                                dpi = 600) 
+                axes = fig.subplots()
+                axes.axvspan(0, t_sta+1, 
+                            facecolor='brown', alpha=0.1)
+                
+                axes.axvspan(t_sta, t_pred+1, 
+                            facecolor='wheat', alpha=0.4)
+                
+                axes.axvspan(t_pred, pred.shape[0] + t_pred, 
+                            facecolor='lightgray', alpha=0.4)
+                # 1 - full true x
+                # - from 0 to t_sta bold 
+                # - from t_sta to t_pred bold (or transparent)
+                # - from t_pred to last transparant
+                axes.plot(range(0, t_sta+1), x[:t_sta+1,c], c = "red", linewidth=2.0, alpha=1, label = r"Observed $X$")
+                axes.plot(range(t_sta, t_pred+1), x[t_sta:t_pred+1,c], c = "red", linewidth=1.5, alpha=0.3, ls = "--")
+                axes.plot(range(t_pred, last_t), x[t_pred:,c], c = "red", linewidth=1.5, alpha=0.3, ls = "--")
+                
+                # axes.plot(range(t_sta-1, t_pred), np.concatenate((x[t_sta-1:t_sta,c],x_sta[:,c]), axis = 0), c = "green", 
+                #         linewidth=1.5, alpha=1.0, label = r"Stationarized $\hat{X}$")
+                
+                # # 3 - pred stationary x
+                # # - from t_pred to last bold 
+                # axes.plot(range(t_pred-1, pred.shape[0] + t_pred), np.concatenate((x_sta[-1:,c], pred[:,c])), c = "blue", 
+                #         linewidth=1.5, alpha=1.0, label = r"Predicted $\bar{X}$") 
+                
+                # 2 - stationarized x
+                # - from t_sta to t_pred bold (-- ls)
+                axes.plot(range(t_sta, t_pred+1), np.concatenate((x_sta[:,c], pred[0:1,c]), axis = 0), c = "green", 
+                        linewidth=lw, alpha=1.0, label = r"Stationarized $\hat{X}$")
+                
+                # 3 - pred stationary x
+                # - from t_pred to last bold 
+                axes.plot(range(t_pred, pred.shape[0] + t_pred), pred[:,c], c = "blue", 
+                        linewidth=lw, alpha=1.0, label = r"Predicted $\bar{X}$")
+                axes.fill_between(range(t_pred, pred.shape[0] + t_pred), lower_bound_pred[:,c], upper_bound_pred[:,c], 
+                                color='royalblue', alpha=0.6, label="95% CI")
+                # TODO check color
+                # axes.axvspan(0, t_sta, 
+                #         facecolor='wheat', alpha=0.5)
+                
                 
                 plt.xlabel("Time", fontsize=20, fontweight='bold')
                 plt.ylabel("Magnitude", fontsize=20, fontweight='bold')
                 plt.xticks(fontweight='bold', fontsize = 20)   
                 plt.yticks(fontweight='bold', fontsize = 20)
-                legend = axes.legend(fontsize=20, loc='upper center', bbox_to_anchor=(0.5, 1.1))
+                legend = axes.legend(fontsize=20, loc='upper center', # bbox_to_anchor=(0.5, 1.1),
+                                     edgecolor='black', facecolor='white',
+                                    frameon=True,  # Ensures the frame is on
+                                    framealpha=1,  # Makes the frame completely opaque
+                                    fancybox=True,
+                                    ncol=2)
                 plt.tight_layout()
-                plt.savefig(os.path.join(self.data_pics, f"{label}_machine{i}_channel_{c}.png" ))    
+                plt.savefig(os.path.join(self.data_pics, f"full_fore_{title}_channel_{c}_epoch{epoch}_time{t_pred}.png" ))    
                 plt.clf()   
                 plt.close(fig)
 
-                if c > 0:
-                    break;
-    def recon_plot(self, x, y, label = ["",""], epoch = "", title = ""):
-        x= x[:,:2].detach().cpu().numpy()
-        y = y[:,:2].detach().cpu().numpy()
-        
+            # if c+1 >= num_channel:
+            #     break;
+
+        # Plot only the stationarization and prediction
         for c in range(x.shape[-1]):
-            fig = plt.figure(figsize=(12, 8), 
-                            dpi = 600) 
-            axes = fig.subplots()
-            axes.plot(x[:,c], c = "blue", linewidth=1, alpha=1, label = label[0])
-            axes.plot(y[:,c], c = "red", linewidth=1, alpha=0.7, ls = "--", label = label[1])
-
-            plt.xlabel("Time", fontsize=20, fontweight='bold')
-            plt.ylabel("Magnitude", fontsize=20, fontweight='bold')
-            plt.xticks(fontweight='bold', fontsize = 20)   
-            plt.yticks(fontweight='bold', fontsize = 20)
-            legend = axes.legend(fontsize=20, loc='upper center', bbox_to_anchor=(0.5, 1.1))
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.data_pics, f"{title}_channel_{c}_epoch{epoch}.png" ))    
-            plt.clf()   
-            plt.close(fig)
-
-            if c > 6:
-                break;
-    def forecasting_plot(self, x, pred, y, label = ["",""], epoch = "", title = ""):
-        W, T, dx = x.shape
-        H, T, dx = pred.shape
-        # TODO Check how to plot this from the original ocir code  
-        pred_x = torch.concat((x.view(-1,dx), pred.view(-1,dx)), dim = 0).detach().cpu().numpy() # Stationarized 
-        y_x = torch.concat((x.view(-1,dx), y.view(-1,dx)), dim = 0).detach().cpu().numpy() # non-stationary
-        
-        for c in range(x.shape[-1]):
-            fig = plt.figure(figsize=(12, 8), 
-                            dpi = 600) 
-            axes = fig.subplots()
-            axes.plot(x[:,c], c = "blue", linewidth=1, alpha=1, label = label[0])
-            axes.plot(y[:,c], c = "red", linewidth=1, alpha=0.7, ls = "--", label = label[1])
-
-            plt.xlabel("Time", fontsize=20, fontweight='bold')
-            plt.ylabel("Magnitude", fontsize=20, fontweight='bold')
-            plt.xticks(fontweight='bold', fontsize = 20)   
-            plt.yticks(fontweight='bold', fontsize = 20)
-            legend = axes.legend(fontsize=20, loc='upper center', bbox_to_anchor=(0.5, 1.1))
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.data_pics, f"{title}_channel_{c}_epoch{epoch}.png" ))    
-            plt.clf()   
-            plt.close(fig)
-
-            if c > 6:
-                break;
-    
+            if c in channel_to_plot:
+                fig = plt.figure(figsize=(12, 8), 
+                                dpi = 600) 
+                axes = fig.subplots()
+                axes.axvspan(t_sta, t_pred+1, 
+                            facecolor='wheat', alpha=0.4)
+                
+                axes.axvspan(t_pred, pred.shape[0] + t_pred, 
+                            facecolor='lightgray', alpha=0.4)
+                # 2 - stationary x
+                # - from t_sta to t_pred bold (-- ls)
+                axes.plot(range(t_sta, t_pred+1), np.concatenate((x_sta[:,c], pred[0:1,c]), axis = 0), c = "green", 
+                        linewidth=lw, alpha=1.0, label = r"Stationarized $\hat{X}$")
+                
+                # 3 - pred stationary x
+                # - from t_pred to last transparant 
+                axes.plot(range(t_pred, pred.shape[0] + t_pred), pred[:,c], c = "blue", 
+                        linewidth=lw, alpha=1.0, label = r"Predicted $\bar{X}$")
+                axes.fill_between(range(t_pred, pred.shape[0] + t_pred), lower_bound_pred[:,c], upper_bound_pred[:,c], 
+                                color='royalblue', alpha=0.6, label="95% CI")
+                
+                plt.xlabel("Time", fontsize=20, fontweight='bold')
+                plt.ylabel("Magnitude", fontsize=20, fontweight='bold')
+                plt.xticks(fontweight='bold', fontsize = 20)   
+                plt.yticks(fontweight='bold', fontsize = 20)
+                legend = axes.legend(fontsize=20, loc='upper center', #bbox_to_anchor=(0.5, 1.1),
+                                     edgecolor='black', facecolor='white',
+                                    frameon=True,  # Ensures the frame is on
+                                    framealpha=1,  # Makes the frame completely opaque
+                                    fancybox=True,
+                                    ncol = 2)
+                plt.tight_layout()
+                plt.savefig(os.path.join(self.data_pics, f"fore_{title}_channel_{c}_epoch{epoch}_time{t_pred}.png" ))    
+                plt.clf()   
+                plt.close(fig)
+            # if c+1 >= num_channel:
+            #     break;
     def info_qualitative_analysis(self, 
                             prior_z, z_h, z_E,
                             prior_c, c_E, c_gt, c_Q,

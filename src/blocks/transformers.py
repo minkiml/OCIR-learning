@@ -134,8 +134,8 @@ class shared_transformer(nn.Module):
         self.pos_enc = SinCosPositionalEncoding(d_model, window + 2)
         self.fE_projection = Conv1by1(dx, d_model)
         transformer_encoder = [TransformerEncoderBlock(embed_dim = d_model, num_heads = self.num_heads,
-                                                                    ff_hidden_dim = int(d_model * 3), dropout = 0.15,
-                                                                    prenorm = False) for _ in range(self.depth)]
+                                                                    ff_hidden_dim = int(d_model * 3), dropout = 0.1,
+                                                                    prenorm = True) for _ in range(self.depth)]
         self.transformer_encoder = nn.ModuleList(transformer_encoder)
         
         
@@ -166,7 +166,7 @@ class SharedEncoder(nn.Module):
         super(SharedEncoder, self).__init__()
         self.z_projection = z_projection
         self.num_heads = num_heads
-        self.depth = 2
+        self.depth = 1
         self.time_emb = time_emb
         self.c2_projection = c2_projection
         
@@ -178,7 +178,7 @@ class SharedEncoder(nn.Module):
         
         
         TransformerEncoder = [TransformerEncoderBlock(embed_dim = d_model, num_heads = self.num_heads,
-                                                        ff_hidden_dim = int(d_model * 3), dropout = 0.15,
+                                                        ff_hidden_dim = int(d_model * 3), dropout = 0.25,
                                                         prenorm =True) for _ in range(self.depth)]
         self.TransformerEncoder = nn.ModuleList(TransformerEncoder)
         

@@ -32,7 +32,7 @@ def opt_constructor(scheduler,
         
         for model in models:
             # Apply rl scaling when training for downstream task
-            if isinstance(model, src.Regressor):
+            if isinstance(model, (src.Regressor, src.Forecaster)):
                 ft_rate = 1.
             else: ft_rate = ft_lr_rate
             
@@ -83,6 +83,10 @@ def opt_constructor(scheduler,
         param_groups = []
         seen_params = set()
         for model in models:
+            if isinstance(model, (src.Regressor, src.Forecaster)):
+                ft_rate = 1.
+            else: ft_rate = ft_lr_rate
+            
             if model is None:
                 continue
             decay_params = []

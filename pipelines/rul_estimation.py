@@ -26,6 +26,7 @@ class RulPipeline(solver_base.Solver):
             self.training_log = None
             self.vali("evaluation")
             self.vali("full_test")
+            self.vali("full_test", [5, 10, 15, 20])
         self.rul_predictor.train(False)
         return self.rul_predictor
     def train(self):
@@ -77,7 +78,7 @@ class RulPipeline(solver_base.Solver):
         self.logger.info("Training a RUL is done. Saving the model ...")
         ut.save_model(self.rul_predictor, path_ = self.model_save_path, name = "rul")
         self.vali("full_test")
-    def vali(self, epoch):
+    def vali(self, epoch, specific_instance = []):
         self.rul_predictor.train(False)
         RUL_PRED = dict()
         error = []
@@ -98,16 +99,24 @@ class RulPipeline(solver_base.Solver):
             min_value = min(error)
             min_index = error.index(min_value)
             
-            N = len(RUL_PRED)
-            inst = 10
-            if inst > N:
-                raise ValueError("S must be less than or equal to N to ensure unique values.")
-            indx = random.sample(range(1, N + 1), inst)
+            if len(specific_instance) > 0:
+                for ii in indx:
+                    self.evaluation.rul_plot(RUL_PRED[ii].detach().cpu().numpy(), 
+                                                self.full_test_set[ii]["Y"].detach().cpu().numpy(),
+                                                str(ii))
+            else:
+                N = len(RUL_PRED)
+                inst = 4
+                if inst > N:
+                    raise ValueError("S must be less than or equal to N to ensure unique values.")
+                indx = random.sample(range(1, N + 1), inst)
 
-            for ii in indx:
-                self.evaluation.rul_plot(RUL_PRED[ii].detach().cpu().numpy(), 
-                                        self.full_test_set[ii]["Y"].detach().cpu().numpy(),
-                                        str(ii))
+                for ii in indx:
+                    self.evaluation.rul_plot(RUL_PRED[ii].detach().cpu().numpy(), 
+                                            self.full_test_set[ii]["Y"].detach().cpu().numpy(),
+                                            str(ii))
+            
+                
         else:
             RUL_PRED = []
             RUL_TRUE = []
@@ -147,36 +156,42 @@ class RulPipeline(solver_base.Solver):
             self.logger.info("")
             return total_param
         
-        if os.path.exists(os.path.join(self.model_save_path, 'rul_cp.pth')) and (encoder is None):
-            print("A pre-trained rul predictor is available and being loaded ... ")
-            shared_encoder_layer = src.SharedEncoder(dx=self.dx, dz=self.dz, window=self.window, d_model=self.d_model, 
-                                          num_heads=self.num_heads,z_projection=self.z_projection, time_emb=self.time_embedding) # None
-            prior_z = src.DiagonalGaussian(self.dz, mean = 0, var = 1, device=self.device)
-            h = src.LatentFlow(self.dz, prior_z)
-            f_E = src.LatentEncoder(dx=self.dx, dz=self.dz, window=self.window, d_model=self.d_model, 
-                                          num_heads=self.num_heads, z_projection=self.z_projection, 
-                                          time_emb=self.time_embedding, encoder_E=self.encoder_E, p_h=h, 
-                                          shared_EC= True if shared_encoder_layer is not None else False) # TODO ARGUMENTS AND also how to deal with the shared part?
-          
-            rul_predictor = src.RulEstimator(dz=self.dz, 
-                                            pretrained_encoder=f_E, 
-                                            shared_layer = shared_encoder_layer,
-                                            device=self.device)  
-            #load here 
-        else:
-            rul_predictor = src.RulEstimator(dz=self.dz, 
-                                    pretrained_encoder=encoder, 
-                                    shared_layer = shared_encoder_layer,
+        rul_predictor = src.RulEstimator(dz=self.dz, 
+                                    pretrained_encoder=deepcopy(encoder.f_E), 
+                                    shared_layer = deepcopy(encoder.shared_encoder_layers) if encoder.shared_encoder_layers is not None else None,
                                     device=self.device)  
+        
+        # if os.path.exists(os.path.join(self.model_save_path, 'rul_cp.pth')) and (encoder is None):
+        #     print("A pre-trained rul predictor is available and being loaded ... ")
+        #     shared_encoder_layer = src.SharedEncoder(dx=self.dx, dz=self.dz, window=self.window, d_model=self.d_model, 
+        #                                   num_heads=self.num_heads,z_projection=self.z_projection, time_emb=self.time_embedding) # None
+        #     prior_z = src.DiagonalGaussian(self.dz, mean = 0, var = 1, device=self.device)
+        #     h = src.LatentFlow(self.dz, prior_z)
+        #     f_E = src.LatentEncoder(dx=self.dx, dz=self.dz, window=self.window, d_model=self.d_model, 
+        #                                   num_heads=self.num_heads, z_projection=self.z_projection, 
+        #                                   time_emb=self.time_embedding, encoder_E=self.encoder_E, p_h=h, 
+        #                                   shared_EC= True if shared_encoder_layer is not None else False) # TODO ARGUMENTS AND also how to deal with the shared part?
+          
+        #     rul_predictor = src.RulEstimator(dz=self.dz, 
+        #                                     pretrained_encoder=f_E, 
+        #                                     shared_layer = shared_encoder_layer,
+        #                                     device=self.device)  
+        #     #load here 
+        # else:
+        #     rul_predictor = src.RulEstimator(dz=self.dz, 
+        #                             pretrained_encoder=encoder, 
+        #                             shared_layer = shared_encoder_layer,
+        #                             device=self.device)  
             
         print_model(rul_predictor, "RUL predictior")
         self.rul_predictor, self.required_training = ut.load_model(rul_predictor, self.model_save_path, "rul")
         self.rul_predictor.to(self.device)
         
     def get_optimizers(self):
-        opt_RUL, scheduler_RUL, wd_scheduler_RUL = ut.opt_constructor(True, #self.scheduler,
+        opt_RUL, scheduler_RUL, wd_scheduler_RUL = ut.opt_constructor(False, #self.scheduler,
                                                                 [self.rul_predictor.shared_layer, self.rul_predictor.encoder, self.rul_predictor.regressor],
-                                                                lr = self.lr_,
+                                                                # [self.rul_predictor.regressor],
+                                                                lr = self.rul_lr,
                                                                 warm_up = int(self.rul_epochs* self.ipe * self.warm_up),
                                                                 fianl_step = int(self.rul_epochs* self.ipe),
                                                                 start_lr = self.start_lr,
@@ -185,5 +200,5 @@ class RulPipeline(solver_base.Solver):
                                                                 start_wd = self.start_wd,
                                                                 final_wd = self.final_wd,
                                                                 
-                                                                ft_lr_rate = 5e-2)
+                                                                ft_lr_rate = 1e-1)
         return [opt_RUL, scheduler_RUL, wd_scheduler_RUL]

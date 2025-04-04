@@ -19,7 +19,7 @@ class Discriminator(nn.Module): # bunch of encoder layers
                  shared_layer = None):
         super(Discriminator, self).__init__()
 
-        self.depth = 2
+        self.depth = 1
         self.num_heads = num_heads
         self.D_projection = D_projection
         self.shared_layer = shared_layer
@@ -34,8 +34,8 @@ class Discriminator(nn.Module): # bunch of encoder layers
         else:
             self.discriminator_layers = nn.Sequential(src_utils.Linear(d_model, d_model),
                                                       nn.LeakyReLU(0.2)
-                                                    #   ,
-                                                    #   nn.Linear(d_model, d_model),
+                                                      ,
+                                                      nn.Linear(d_model, d_model)
                                                     #   nn.LeakyReLU(0.2)
                                                       )
         # (N, L, C) -> (N, C)
@@ -183,7 +183,7 @@ class CodePosterior_seq(nn.Module):
         super(CodePosterior_seq, self).__init__() 
         self.dx = dx
         self.d_model_c = d_model
-        self.depth = 2
+        self.depth = 1
         self.dc = dc
         self.c_type = c_type
         self.shared_layer = shared_layer

@@ -49,21 +49,39 @@ class Solver(object):
             raise NotImplementedError("")
             load_circle()
         else: 
+            # if self.task == "data_trj":
+            #     self.training_data, self.val_data, self.testing_data, _, _ = load_CMAPSS(dataset = self.dataset,
+            #                                                         data_path = self.data_path,
+            #                                                         task = "RL",
+            #                                                         T = self.window,
+            #                                                         H = self.H,
+            #                                                         H_lookback = self.hyper_lookback,
+            #                                                         rectification = 125,
+            #                                                         batch_size = self.batch,
+            #                                                         normalize_rul = True,
+            #                                                         vis = False,
+            #                                                         logger = self.logger,
+            #                                                         plot = self.evaluation,
+            #                                                         valid_split= self.valid_split)
+            # else:
             self.training_data, self.val_data, self.testing_data, self.full_test_set = load_CMAPSS(dataset = self.dataset,
-                                                                    data_path = self.data_path,
-                                                                    task = self.task,
-                                                                    T = self.window,
-                                                                    H = self.H,
-                                                                    H_lookback = self.hyper_lookback,
-                                                                    rectification = 125,
-                                                                    batch_size = self.batch,
-                                                                    normalize_rul = True,
-                                                                    vis = False,
-                                                                    logger = self.logger,
-                                                                    plot = self.evaluation)
+                                                                data_path = self.data_path,
+                                                                task = "RL",
+                                                                T = self.window,
+                                                                H = self.H,
+                                                                H_lookback = self.hyper_lookback,
+                                                                rectification = 125,
+                                                                batch_size = self.batch,
+                                                                normalize_rul = True,
+                                                                vis = True,
+                                                                logger = self.logger,
+                                                                plot = self.evaluation,
+                                                                valid_split= self.valid_split)
+            
+            
         
         self.ipe = len(self.training_data)
-        
+        # raise NotImplementedError("")
     def build_model(self):
         def print_model(m, model_name):
             self.logger.info(f"Model: {model_name}")
@@ -80,7 +98,7 @@ class Solver(object):
         ocir = src.OCIR(dx=self.dx, dz=self.dz, dc=self.dc, window=self.window, 
                         d_model=self.d_model, num_heads=self.num_heads, z_projection=self.z_projection, 
                         D_projection=self.D_projection, time_emb=self.time_embedding, c_type=self.c_type, 
-                        c_posterior_param=self.c_posterior_param, encoder_E=self.encoder_E, device=self.device)
+                        c_posterior_param=self.c_posterior_param, encoder_E=self.encoder_E, c_kl= self.c_kl, device=self.device)
         
         print_model(ocir, "OCIR")
         self.ocir, self.required_training = ut.load_model(ocir, self.model_save_path, "OCIR")

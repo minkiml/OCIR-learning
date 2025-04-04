@@ -37,7 +37,13 @@ class Standardization:
         return y
     def get(self):
         return self.mean, self.std
-
+    
+    def de_normalization(self, y):
+        
+        for i, j in enumerate (y):
+            y[j] = y[j] * self.std + self.mean
+        return y
+    
 def even_chunks(n):
     assert n % 2 == 0
     # Generate n evenly spaced points between -1 and 1
@@ -52,7 +58,7 @@ def even_chunks(n):
 
 def get_continuous_property(X, stds_ = None,
                             varying = True, swapping_map = None,
-                            add_cont = True):
+                            add_cont = True, vis = False):
     # get total num of observations  
     num_obs = 0
     for xx in (X.values()):
@@ -64,10 +70,10 @@ def get_continuous_property(X, stds_ = None,
 
     # Create synthetic continous property φc_t. 
     if stds_ is None:
-        # hard-coded coefficients, which is much higher variance than (max-min) of signal
+        # hard-coded coefficients
        phi_ = np.array([1., 2., 3.5, 2.7, 2.0, 3.0, 0.1, 2.2, 1.6, 2.2, 0.1, 1.1, 0.15, 0.3]) * 30 
     else: # based on min-max variation
-        phi_ = stds_ * 2
+        phi_ = stds_ * 2.0
     # Generate c for all observations 
     continuous_ocs = (np.random.rand(len_) * 2) -1 # [-1,1]
     # continuous_ocs = (np.random.randn(len_))  # N(0,1)
@@ -80,11 +86,11 @@ def get_continuous_property(X, stds_ = None,
     We do this by randomly permuting chunks of values in the range [-1,1] across the channels
     '''
 
-    # We set even number of reference chunks and pair them randomly to get a swapping map for each feature
+    # Piece-wise function c_i = f_i(c_1) for i = 2, ..., dx
     if varying:
         if swapping_map is None:
             d_ = True
-            chunks_num = 10
+            chunks_num = 4
             iii = 0
             while d_:
                 chunks = even_chunks(chunks_num)
@@ -106,10 +112,12 @@ def get_continuous_property(X, stds_ = None,
                         continuous_ocs[b_to_a, j] = continuous_ocs[b_to_a, 0] - distance
                 # To check 
                 check_ = np.all(continuous_ocs[:, np.newaxis, :] == continuous_ocs[:, :, np.newaxis], axis=0)
-                d_ = np.any(check_ & ~np.eye(check_.shape[0], dtype=bool))
-                iii += 1
-                if iii > 6: # if the loop takes long increases the chunk number
-                    chunks_num += 2
+                d_ = False
+                # d_ = np.any(check_ & ~np.eye(check_.shape[0], dtype=bool))
+                # iii += 1
+                # if iii > 6: # if the loop takes long increases the chunk number
+                #     chunks_num += 2
+            print("chunk number: ", chunks_num)
         else:
             for j in range (1,channel_dim):
                 random_pairs = swapping_map[j-1]
@@ -123,7 +131,23 @@ def get_continuous_property(X, stds_ = None,
                     # swap
                     continuous_ocs[a_to_b, j] = continuous_ocs[a_to_b, 0] + distance
                     continuous_ocs[b_to_a, j] = continuous_ocs[b_to_a, 0] - distance
-    
+    if vis and varying:
+        c1_values = np.linspace(-1, 1, 500)
+        c1_values = np.expand_dims(c1_values,1)
+        c1_values = np.repeat(c1_values,channel_dim,1)
+        for j in range (1,channel_dim):
+            random_pairs = swapping_map[j-1]
+            # for each pair, do swap
+            for pair in random_pairs:
+                range_a, range_b = pair
+                distance = range_b[0] - range_a[0] # (+)a->b  (-) a<-b
+                # indices
+                a_to_b = np.logical_and(c1_values[:, 0] >= range_a[0], c1_values[:, 0] < range_a[1])
+                b_to_a = np.logical_and(c1_values[:, 0] >= range_b[0], c1_values[:, 0] < range_b[1])
+                # swap
+                c1_values[a_to_b, j] = c1_values[a_to_b, 0] + distance
+                c1_values[b_to_a, j] = c1_values[b_to_a, 0] - distance
+    else: c1_values = None
     # use base c_t as ground truth continuous ocs
     gt_ocs = continuous_ocs[:,0:1]
     # φc_t
@@ -140,7 +164,7 @@ def get_continuous_property(X, stds_ = None,
         gt_c[xx] = gt_ocs[idx_from: idx_to, :]
         
         idx_from = idx_to
-    return X, swapping_map, gt_c
+    return X, swapping_map, gt_c, c1_values
 
 def sw_function(x, ocs, w_T):
     seq_X, seq_ocs= x, ocs  # (L_k, c_x), (L_k, c_ocs), (L_k, c_z)
@@ -240,7 +264,7 @@ def apply_hyper_window(data_dict, H, W, S):
             windowed_ocs_padded = np.pad(windowed_ocs, ((0, pad_size), (0, 0), (0, 0)), mode="edge")
             windowed_time_padded = np.pad(windowed_time, ((0, pad_size), (0, 0)), mode="edge")
             
-            print(windowed_X_padded.shape)
+            # print(windowed_X_padded.shape)
             # Collect hyper lookback and hyper horizon windows
             
             start_W = (W - 1) * S
@@ -293,6 +317,16 @@ def apply_hyper_window(data_dict, H, W, S):
         return hyper_windowed_dict, (hyper_lookback_X_all, hyper_horizon_X_all, 
                                      hyper_lookback_ocs_all, hyper_horizon_time_all)
 
+def np_to_tensor(x, ocs):
+    
+    data_dict = dict()
+    for key in x:
+        L = x[key].shape[0]
+        data_dict[key] = {"X": torch.tensor(x[key], dtype=torch.float32),
+                          "ocs": torch.tensor(ocs[key], dtype=torch.float32),
+                          "tidx": torch.tensor(np.arange(1, L + 1).reshape(-1, 1), dtype=torch.long)}
+        
+    return data_dict
 def format_testing_data(test_p = None, testing_ocs = None, testing_rul = None,
                         T = 25, normalize_rul = True, rectification = 125):
     full_test_set = dict()

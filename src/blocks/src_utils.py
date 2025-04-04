@@ -123,12 +123,12 @@ class rnn_decoding_seqtoken(nn.Module):
                 self.register_buffer("seqtoken", seqtoken)
         self.expansion = Linear(dz,hidden_dim, bias = False)
         # self.apply(src_utils.init_gru)
-    def forward(self, z, c = None, zin = None):
+    def forward(self, z, c = None, zin = None, c2 = None):
         N, dz = z.shape
         if not self.seq_out:
             # print(self.seqtoken)
-            # seqtoken = self.seqtoken.repeat(N, 1, 1).to(z.device) # expansion
-            seqtoken = self.seqtoken.expand(N, -1, -1).to(z.device) # expansion
+            seqtoken = self.seqtoken.repeat(N, 1, 1).to(z.device) # expansion
+            # seqtoken = self.seqtoken.expand(N, -1, -1).to(z.device) # expansion
             
             if c is not None:
                 c = torch.flip(c, dims = [1]) # flip the seq indices so that the hidden state can influence from the last 
@@ -182,14 +182,16 @@ class rnn_decoding(nn.Module):
 
 class wide_decoding(nn.Module):
     '''Use the input z as starting state to propagate'''
-    def __init__(self, dz, dc, hidden_dim = 32, window = 100, dc2 = 0):
+    def __init__(self, dz, dc, hidden_dim = 32, window = 100,
+                 dc2 = 0, expansion_dim = 32):
         super(wide_decoding, self).__init__()# TODO 
         self.hidden_dim = hidden_dim
         self.dz = dz
         self.window = window
-
-        self.expansion = Linear(dz + dc2, 64 * window, bias=False)
-        self.expansion2 = Linear(64 + dc, hidden_dim, bias=False)
+        self.expansion_dim = expansion_dim
+        
+        self.expansion = Linear(dz + dc2, expansion_dim * window, bias=False)
+        self.expansion2 = Linear(expansion_dim + dc, hidden_dim, bias=False)
         # self.apply(src_utils.init_gru)
     def forward(self, z, c = None, zin = None, c2 = None):
         N, dz = z.shape
@@ -198,8 +200,8 @@ class wide_decoding(nn.Module):
         else:
             z = z
         z = self.expansion(z)
-        z = z.view(N, self.window, 64)
-        z += (torch.randn(z.shape) * 0.15).to(z.device) # TODO 
+        z = z.view(N, self.window, self.expansion_dim)
+        z += (torch.randn(z.shape) * 0.1).to(z.device) # TODO 
         # print(z.mean(-1))
         
         if c is not None:

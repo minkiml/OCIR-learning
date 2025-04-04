@@ -113,7 +113,7 @@ class VAEPipeline(solver_base.Solver):
         ALL_tidx = []
         ALL_time_tokens = []
         with torch.no_grad():
-            for i, (x,_, ocs, tidx) in enumerate(self.val_data if self.val_data else self.training_data): 
+            for i, (x,_, ocs, tidx) in enumerate(self.training_data): 
                 x = x.to(self.device)
                 tidx = tidx.to(self.device)
                 ALL_CGT.append(ocs)
@@ -227,7 +227,7 @@ class VAEPipeline(solver_base.Solver):
                         d_model=self.d_model, num_heads=self.num_heads, z_projection=self.z_projection, 
                         D_projection=self.D_projection, time_emb=self.time_embedding, c_type=self.c_type, 
                         c_posterior_param=self.c_posterior_param, encoder_E=self.encoder_E, device=self.device,
-                        supervised= self.supervised)
+                        supervised= self.supervised, kl_annealing=self.kl_annealing)
         
         print_model(vae, "VAE")
         self.vae, self.required_training = ut.load_model(vae, self.model_save_path, "VAE")

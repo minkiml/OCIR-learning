@@ -75,7 +75,12 @@ def MA(x, y, window_ = 3):
         y_[i-window_//2] = y[i-(window_//2):i+(window_//2)].mean()
     return x_, y_
 
-def forecasting_acc(x_fore, x_target, sta_reg = 25, avg = 3):
+def forecasting_acc(x_fore, x_target, 
+                    x_init, target_init,
+                    sta_reg = 25, avg = 3):
+    '''
+    Compute quantitative measures in full sequence-wise 
+    '''
     ''' TODO
     unnormalized inputs 
     x_fore and x_true -->(length, feature)   the sequence includes non-forecasted region for which acc is not computed.
@@ -92,16 +97,19 @@ def forecasting_acc(x_fore, x_target, sta_reg = 25, avg = 3):
     # # Compute acc over forecasted ones
     # x_fore = x_fore[sta_reg:,:]
     # x_target = x_target[sta_reg:,:]
-    # Sample-wise normalization
-    x_fore = (x_fore - x_fore.mean(0)) / x_fore.std(0)
-    cali_ = x_fore[:50,:].mean(0)
-    x_fore -= cali_
-    x_fore = x_fore[sta_reg:,:]
     
-    x_target = (x_target - x_target.mean(0)) / x_target.std(0)
-    cali_ = x_target[:50,:].mean(0)
-    x_target -= cali_
-    x_target = x_target[sta_reg:,:]
+    
+    # Sample-wise normalization
+    x_fore = (x_fore - x_init.mean(0)) / x_init.std(0) # standardization
+    # cali_ = x_fore[:40,:].mean(0) # calibration based along the healthy state 
+    # x_fore -= cali_
+    x_fore = x_fore[:,:]
+    
+    x_target = (x_target - target_init.mean(0)) / target_init.std(0)
+    # cali_ = x_target[:40,:].mean(0)
+    # x_target -= cali_
+    x_target = x_target[:,:]
+    
     ## MSE
     mse_ = np.mean((x_fore - x_target) ** 2)
     ## MAE
@@ -110,11 +118,11 @@ def forecasting_acc(x_fore, x_target, sta_reg = 25, avg = 3):
     mape_ = np.mean(np.abs((x_fore - x_target) / x_target)) #* 100
     # PCC
     for ii in range (avg):
+        # Moving average for computing PCC over trend
         x_fore, x_target = MA(x_fore, x_target)
     correlations = [pearsonr(x_fore[:, i], x_target[:, i])[0] for i in range(x_fore.shape[1])]
     pcc = np.mean(correlations)
-    # Potentially MASE
-    pass    
+
     return mse_, mae_, mape_, pcc
 # # Example usage
 # predicted_clusters = np.array([1, 1, 2, 2, 2, 3])
