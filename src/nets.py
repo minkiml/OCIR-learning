@@ -162,8 +162,8 @@ class VAE(nn.Module):
 
     def L_R(self, x, tidx, cond =None, epoch = None):
         if epoch is not None:
-            annealing = min(0.15, epoch / 30)
-        else: annealing = 0.15
+            annealing = min(0.1, epoch / 30)
+        else: annealing = 0.1
         N, L, _ = x.shape
         # beta is a warm-up coefficient for preventing negative 
         # Encoding

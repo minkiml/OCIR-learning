@@ -1,10 +1,10 @@
 
-# sh ./scripts/trj/ocir_learning_vae_trj.sh
+# sh ./scripts/trj/ocir_learning_vae_trj_uncon.sh
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 runs=4
 data_path_name='./datasets/cmapss_dataset'
 datas=(FD001 FD002 FD003 FD004)
-dcs=(1 6 1 6)
+dcs=(0 0 0 0)
 lrs=(0.00015 0.00015 0.00015 0.00015)
 kls=(0.1 0.1 0.1 0.1)
 random_seed=1024
@@ -12,6 +12,7 @@ run_id=2
 
 batch_size=368
 W=25
+
 for (( i=0; i<${runs}; i++ ));
 do
     data=${datas[$i]}
@@ -21,15 +22,15 @@ do
     python -u main.py \
     --seed $random_seed \
     --data_path $data_path_name \
-    --description trj_vae_cond \
+    --description trj_vae_uncond \
     --log_path ./Logs_VAE/logs_ \
     --id_ $run_id \
     --dataset $data \
-    --conditional 1 \
+    --conditional 0 \
     --kl_annealing $kl\
     --net vae \
     --task data_trj \
-    --gpu_dev 1 \
+    --gpu_dev 7 \
     --window $W \
     --hyper_lookback 2\
     --H 4 \
