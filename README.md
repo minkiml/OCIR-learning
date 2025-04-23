@@ -8,11 +8,11 @@ A novel framework for learning *Operating Condition-Invariant Representations (O
 
 ![Overall workflow](images/figure1_overview.png)
 
-1) We introduce a novel cycle-consistency regularization that encourages the mutual improvement between the generative and inference networks in an end-to-end fashion.
+1) **We introduce a novel cycle-consistency regularization** that encourages the mutual improvement between the generative and inference networks in an end-to-end fashion.
 
-2) We show that the learned invariant representations are highly effective in various downstream tasks. Especially, in the key downstream task-remaining useful life estimation, the OCIR outperforms the custom baseline models and state-of-the-art models that do and do not incorporate the operation parameters by notable margin.
+2) We show that the learned invariant representations are highly effective in various downstream tasks. Especially, in the key downstream task-remaining useful life estimation, the **OCIR outperforms the custom baseline models and state-of-the-art models that do and do not incorporate the operation parameters by notable margin**.
 
-3. Moreover, we show that OCIR can readily facilitate the transformation of given raw data subject to varying operating conditions into any of the learned operating conditions. Using this, we showcase a construction of a novel trajectory model in “virtually stationary” operating condition, directly from raw condition monitoring data under varying operating conditions.
+3. Moreover, we show that OCIR can readily facilitate the transformation of given raw data subject to varying operating conditions into any of the learned operating conditions. Using this, **we showcase a construction of a novel trajectory model in “virtually stationary” operating condition**, directly from raw condition monitoring data under varying operating conditions.
 
 
 ## Getting started
@@ -35,7 +35,7 @@ The current implementation uses a single GPU and provides no multiple GPU setup.
 
 2. Manually set the path_ variable of line 32 in [cmapssformater.py](datasets/data_format/cmapssformater.py) to the path to the downloaded data in step 1.
 
-3. Running any of experiment scripts will automatrically run the formatting and saving the formatted data in a new data directory (cmpass_dataset folder) under datasets folder.
+3. Running any of experiment scripts will automatrically run the formatting and saving the formatted data in a new data directory ("cmpass_dataset" folder) under "datasets" folder.
 
 ## Running experiments
 There are 3 different sets of experimental scripts under this [folder](scripts)
@@ -53,7 +53,7 @@ To train OCIR for rul estimation, for instance, do
 ```trainrul
 sh ./scripts/rul/ocir_learning_disc_rul_FD002.sh
 ```
-This automatically train OCIR on representation learning first (if no pretrained one is available) and applies it to RUL estimation.
+This automatically trains OCIR on representation learning first (if no pretrained one is available) and applies it to RUL estimation.
 
 ### Trajectory construction
 To train OCIR for trajectory construction, for instance, do 
@@ -61,4 +61,4 @@ To train OCIR for trajectory construction, for instance, do
 ```traintrj
 sh ./scripts/trj/ocir_learning_disc_trj_FD002.sh
 ```
-This automatically train OCIR on representation learning first (if no pretrained one is available) and applies it to trajectory reconstruction.
+This automatically trains OCIR on representation learning first (if no pretrained one is available) and applies it to trajectory reconstruction.
