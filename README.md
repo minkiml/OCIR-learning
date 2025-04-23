@@ -19,7 +19,7 @@ A novel framework for learning *Operating Condition-Invariant Representations (O
 Clone the OCIR repository via git as follows:
 
 ```clone
-git clone https://github.com/minkiml/NFM.git
+git clone https://github.com/minkiml/OCIR-learning.git
 ```
 
 Then, install requirements as follows:
