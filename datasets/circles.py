@@ -1,4 +1,4 @@
 
 
 def load_circle():
-    pass
+    raise NotImplementedError("")

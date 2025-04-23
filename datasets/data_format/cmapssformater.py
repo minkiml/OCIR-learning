@@ -29,8 +29,8 @@ def format_CMAPSS(rectification = 125):
     Save all the formated data under data_format folder
     '''
     
-    path_ = '/data/home/mkim332/data/CMAPSS'  # Give the path for raw unformatted txt cmapss data  #TODO hide this when pushing 
-    data_dir = "./datasets/cmapss_dataset"
+    path_ = '/data/home/...'  # !! Give the full directory of the raw unformatted txt cmapss data (downloaded one)  
+    data_dir = "./datasets/cmapss_dataset" # leave it or you specify another name for directory for saving the formatted cmapss
     
     
     '''Training data'''
@@ -71,16 +71,6 @@ def format_CMAPSS(rectification = 125):
         else: 
             np_ocs = None
             ocs_training = None
-        # else: 
-        #     '''
-        #     For FD001 and FD003 (constant operating condition), we add φc_t to have continous operating regimes
-        #     '''
-        #     phi = data_utils.get_phi(np_array, entity_ids, entity_labels)
-        #     cont_prop, s_map, np_ocs= data_utils.get_continuous_property(np_array.shape, varying = True, stds_ = phi)        
-        #     original_np = np.array(np_array) # original sequence
-        #     np_array = np_array + cont_prop # x + φc_t
-        #     np_ocs = np_ocs.reshape(-1,1) # ground truth ocs
-        #     # plot_data(np_array[np.where(entity_labels == 65)[0]], title_ = "cont")
 
         for i, label in enumerate(entity_ids):
             # Training data 100 % 
@@ -117,11 +107,7 @@ def format_CMAPSS(rectification = 125):
         else: # FD001 and FD003
             np_ocs = None
             ocs_testing = None
-            # cont_prop, _, np_ocs = data_utils.get_continuous_property(np_array.shape, varying = True, stds_ = phi, swapping_map = s_map)        
-            # test_original_np = np.array(np_array) # original sequence
-            # np_array = np_array + cont_prop # x + φc_t
-            # np_ocs = np_ocs.reshape(-1,1)
-            
+
         for i, label in enumerate(entity_ids):
             indices = np.where(entity_labels == label)[0]
             testing_data[i+1] = np_array[indices, :]

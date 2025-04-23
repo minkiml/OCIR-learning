@@ -71,11 +71,6 @@ class VAEPipeline(solver_base.Solver):
                 opt_R[0].zero_grad()
                 loss_R.backward()
                 
-                # for name, param in self.vae.h.time_embedding.named_parameters():
-                #     if param.grad is not None:
-                #         print(f"Epoch {epoch}, {name} grad norm: {param.grad.norm().item()} \n")
-                #     else:
-                #         print("None \n")
                 for m in reversed(opt_R):
                     if m: m.step()
 
@@ -113,7 +108,7 @@ class VAEPipeline(solver_base.Solver):
         ALL_tidx = []
         ALL_time_tokens = []
         with torch.no_grad():
-            for i, (x,_, ocs, tidx) in enumerate(self.training_data): 
+            for i, (x,_, ocs, tidx) in enumerate(self.training_data if self.valid_split != 0. else self.val_data): 
                 x = x.to(self.device)
                 tidx = tidx.to(self.device)
                 ALL_CGT.append(ocs)
@@ -164,10 +159,7 @@ class VAEPipeline(solver_base.Solver):
                         ALL_time_tokens.append(time_tokens)
                     ALL_Z.append(z0)
                     ALL_ZH_Z0.append(z_H_z0)
-                    # ALL_ZH.append(z_h)
-                
-                    # ALL_ZH.append(z_h)
-                    # ALL_Z.append(prior_z)
+
                     ALL_C = None#.append(prior_c_logit if prior_c_logit is not None else prior_c)
                     ALL_Q = None #.append(q_code_mu)
                     
@@ -175,7 +167,6 @@ class VAEPipeline(solver_base.Solver):
         # On the last batch
         self.evaluation.recon_plot(x[0,:,:], x_rec[0,:,:], label = ["true", "recon"], epoch = str(epoch))
         # Memory intensive if the total sample size is large
-        # ALL_ZE = torch.concatenate((ALL_ZE), dim = 0)
         ALL_ZE = torch.concatenate((ALL_ZE), dim = 0)
         
         if ALL_ZH is not None:
@@ -183,9 +174,6 @@ class VAEPipeline(solver_base.Solver):
         if ALL_Z is not None:
             ALL_Z = torch.concatenate((ALL_Z), dim = 0)
             ALL_ZH_Z0 = torch.concatenate((ALL_ZH_Z0), dim = 0)
-        # ALL_CE = torch.concatenate((ALL_CE), dim = 0)
-        # ALL_C = torch.concatenate((ALL_C), dim = 0)
-        # ALL_Q = torch.concatenate((ALL_Q), dim = 0)
         
         ALL_CGT = torch.concatenate((ALL_CGT), dim = 0)
         ALL_tidx = torch.concatenate((ALL_tidx), dim = 0)
@@ -229,8 +217,8 @@ class VAEPipeline(solver_base.Solver):
                         c_posterior_param=self.c_posterior_param, encoder_E=self.encoder_E, device=self.device,
                         supervised= self.supervised, kl_annealing=self.kl_annealing)
         
-        print_model(vae, "VAE")
-        self.vae, self.required_training = ut.load_model(vae, self.model_save_path, "VAE")
+        print_model(vae, "vae")
+        self.vae, self.required_training = ut.load_model(vae, self.model_save_path, "vae")
         self.vae.to(self.device)
         
     def get_optimizers(self):
@@ -249,8 +237,6 @@ class VAEPipeline(solver_base.Solver):
                                                                         final_lr = self.final_lr,
                                                                         start_wd = self.start_wd,
                                                                         final_wd = self.final_wd)
-        # for opt in [ opt_R]:
-        #     for i, param_group in enumerate(opt.param_groups):
-        #         self.logger.info(f"Group {i}: {param_group}")
+
         return [opt_R, scheduler_R, wd_scheduler_R]  
     

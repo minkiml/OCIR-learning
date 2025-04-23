@@ -3,8 +3,7 @@ import math
 import torch.nn as nn
 from torch.optim.optimizer import Optimizer
 import src
-# from src.blocks import src_utils, normalizing_flow
-# from src.modules import discriminator_Q
+
 def opt_constructor(scheduler,
         models, # list of parametric layers, modules, network model, etc.
         lr,

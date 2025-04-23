@@ -8,9 +8,18 @@ Thumbs.db
 *.vscode
 *cmapss_dataset
 
-# Training logs 
+# Training logs files
 *Logs
 *Logss
 *Logs_VAE
+*Logs_VAE2
+*Logss_trj
+*Logs_VAE_trj
 # Dummy files
 note.txt
+*Logss_trj2
+data_level_traj_demo.py
+representtion_learning_ocirdeep.py
+ocir_deep.py
+test_nf.py
+test.py

@@ -7,7 +7,7 @@ from copy import deepcopy
 from torch.backends import cudnn
 from util_modules import utils
 import pipelines
-
+import time
 def Learning_RL(args, logger):
     logger.info(f"********************* Representation learning *********************")
     if config.net == "ocir":
@@ -21,7 +21,7 @@ def Learning_RL(args, logger):
     elif config.net == "ocir_deep":
         learning = pipelines.RlPipeline_deep(args, logger)
     model = learning()
-    pipelines.Stationarization(args, model, logger) # TODO ocir only right now 
+    # pipelines.Stationarization(args, model, logger) # TODO ocir only right now 
     return model
 
 def Learning_RUL(args, logger, encoder = None, shared_layer = None):
@@ -58,7 +58,10 @@ def main(args, logger):
         rul_model = Learning_RUL(args, logger, rl_model, None)
         
     elif (config.task == "data_trj"):
+        start = time.time()
         rl_model = Learning_RL(args, logger)
+        print("time taken: ",time.time() - start)
+        # rul_model = Learning_RUL(args, logger, rl_model, None)
         trj_model = Learning_TRJ(args, logger, rl_model)
         
     return None

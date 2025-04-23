@@ -37,10 +37,7 @@ class LatentFlow(nn.Module):
         z, log_det = self.normalizing_flow(z_0) # (N, dz)  , (N, ) 
         return z, log_det, z_0
     
-    def inverse(self, ZH = None): # (self, N = None, mu  = None, log_var = None, z0 = None):
-        # if z0 == None:
-        #     z_0 = self.base_distribution.sample(N, mu, log_var)
-        # else: z_0 = z0
+    def inverse(self, ZH = None): 
         z0, log_det = self.normalizing_flow.inverse(ZH) # (N, dz)  , (N, )
         return z0, log_det, ZH 
         

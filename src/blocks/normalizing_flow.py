@@ -61,10 +61,8 @@ class st_block(nn.Module):
     def __init__(self, dz = 10, hidden_dim = 64):
         super(st_block, self).__init__() 
         self.param_s_t = nn.Sequential(src_utils.Linear(dz, hidden_dim, zero= False ),
-                                    #    src_utils.Sine(),
                                        nn.LeakyReLU(0.2),
                                        src_utils.Linear(hidden_dim, hidden_dim, zero= False ),
-                                    #    src_utils.Sine(),
                                        nn.LeakyReLU(0.2),
                                        src_utils.Linear(hidden_dim, dz * 2 , zero= True))
 
@@ -158,9 +156,6 @@ class CouplingLayer(nn.Module):
 
         # Affine transformation
         z = (z + t) * torch.exp(s) 
-        # print("S: ", s[0:2,:])
-        # print("s mu!!:    ", s.mean(dim =-1)[0:10])
-        # print("s std!!:    ", s.std(dim = -1)[0:10])
         ldj += s.sum(dim=[1])
         return z, ldj
     
@@ -200,7 +195,6 @@ class NormalizingFlow(nn.Module):
                 flows.append(CouplingLayer(network=  st_block(dz, hidden_dim= hidden_dim), 
                                 mask = create_checkerboard_mask(h = dz, seq = False, invert=(i%2==1)),
                                 c_in = dz))
-                # create_checkerboard_mask(h = dz, seq = False, invert=(i%2==1))   create_channel_mask(c_in= dz, seq = False, invert=(i%2==1))
             elif transform == "MAF":
                 flows.append(maf.MAF(dim = dz, parity = i%2==1, nh = hidden_dim)) 
             

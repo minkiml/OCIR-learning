@@ -25,9 +25,6 @@ def clustering_acc(Y_pred, Y,
     Y_pred = Y_pred.reshape(-1)
     Y = Y.reshape(-1)
 
-    # assert Y_pred.shape == Y.shape, "sizes do not match"
-    # if dataset_ == 'train_FD002' or dataset_ == 'train_FD004':
-
     # Get a total number of clusters in inputs
     D = max(Y_pred.max(), Y.max())+1
     # form a matrix of 6 x 6
@@ -81,7 +78,7 @@ def forecasting_acc(x_fore, x_target,
     '''
     Compute quantitative measures in full sequence-wise 
     '''
-    ''' TODO
+    ''' 
     unnormalized inputs 
     x_fore and x_true -->(length, feature)   the sequence includes non-forecasted region for which acc is not computed.
     need to accumulate at where it gets called and take a mean of that
@@ -140,10 +137,11 @@ def forecasting_acc(x_fore, x_target,
 
 def RUL_metric(pred, target): # TODO 
     # pred and traget dim --> (samples_num, 1) estimation at the last time step of incomplete sequences
+    
     assert pred.shape == target.shape
     instances_num = pred.shape[0]
     # If normalization was applied put them back
-    pred = pred * 125. # TODO check if this 125. matches with how we normalized in the data formatting
+    pred = pred * 125.
     target = target * 125.
     
     error_ = pred - target

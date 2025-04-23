@@ -131,20 +131,7 @@ class _ResidualBlock(nn.Module):
         x = x + residual
 
         return x
-    # aa = TCN_net(
-        # max_input_length: int,
-        # input_size: int,
-        # kernel_size: int,
-        # num_filters: int,
-        # target_size: int,
 
-        # num_layers: Optional[int] = None,
-        # dilation_base: int = 2,
-        # weight_norm: bool = True,
-        # nr_params: int = 1,
-        # dropout: float = 0.2,
-        # encoding: bool = False
-    #         )
 class TCN_net(nn.Module):
     def __init__(
         self,
@@ -257,54 +244,3 @@ class TCN_net(nn.Module):
         x = x.permute(0, 2, 1)
         x = x.view(batch_size, length_, self.n_filters)
         return x
-    
-'''Test'''    
-    
-# aa = TCN_net(
-#         max_input_length = 20, # This determins the maximum capacity of sequence length
-#         input_size = 10,
-#         kernel_size = 3,
-#         num_filters = 32,
-#         target_size = 32, # This does not need to be specified
-
-#         num_layers = None,
-#         dilation_base = 2,
-#         norm= 'None', # "weightnorm" 
-#         nr_params = 1,
-#         dropout= 0.)
-
-# xx = torch.rand(2, 15, 10)
-# xxx = xx[:,0:2,:]
-# zzz = aa(xxx)
-# total_param = 0
-# for param_tensor in aa.state_dict():
-    
-#     print(param_tensor, "\t", aa.state_dict()[param_tensor].size())
-    
-#     temp = 0
-#     for j in range(aa.state_dict()[param_tensor].ndim):
-#         if (j == 0):
-#             temp = aa.state_dict()[param_tensor].size()[j]
-#         else:
-#             temp = temp * aa.state_dict()[param_tensor].size()[j]
-#     total_param += temp
-# print("Total parameters : ", total_param)
-
-# xx = torch.rand(20,100,3)
-
-# yy = aa(xx)
-
-
-
-
-# TransformerDecoder = [bs.TCN_net(max_input_length = window, # This determins the maximum capacity of sequence length
-#                                     input_size = d_model,
-#                                     kernel_size = 3,
-#                                     num_filters = d_model,
-#                                     num_layers = None,
-#                                     dilation_base = 2,
-#                                     norm= 'weightnorm', # "none1" 
-#                                     nr_params = 1,
-#                                     dropout= 0.1) for _ in range(self.depth)]
-# self.TransformerDecoder = nn.ModuleList(TransformerDecoder)
-

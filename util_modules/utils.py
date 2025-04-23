@@ -127,25 +127,9 @@ class Evaluation():
            unsupervised learning (i.e., clustering with f_C and Q nets).
         
         '''
-        # print(prior_z.shape)
-        # print(z_h.shape)
-        # print(z_E.shape)
-        
-        # print(prior_c.shape)
-        # print(c_E.shape)
-        # print(c_gt.shape)
-        # print(time_ind.shape)
-        
-        # print("prior_c in eval", prior_c.mean())
-        # print("C_E in eval", c_E.mean())
-        # print("C_Q in eval", c_Q.mean())
         self.logger.info(f"Computing plots (epoch = {epoch}) ... ")
         # Latent represenataions
         
-        # Normalize z_h and z_E for comparison with the prior (mean 0 std 1) # TODO noramlize as a whole
-        # z_h = (z_h - z_h.mean(dim = 0, keepdim = True)) / torch.clamp(z_h.std(dim = 0, keepdim = True), min=1e-6) 
-        # z_E = (z_E - z_E.mean(dim = 0, keepdim = True)) / torch.clamp(z_E.std(dim = 0, keepdim = True), min=1e-6) 
-
         # PCA on z
         prior_z, z_h, z_E, z0_E = prior_z.detach().cpu().numpy(), z_h.detach().cpu().numpy(), z_E.detach().cpu().numpy(), z0_E.detach().cpu().numpy()
         pca = PCA(n_components=2)
@@ -157,7 +141,6 @@ class Evaluation():
         z0_E = pca.transform(z0_E)
         pca.fit(z_E)
         z_E = pca.transform(z_E)
-        # prior_z, z_h, z_E = pca.transform(prior_z), pca.transform(z_h), pca.transform(z_E)
         
         # pca.fit(z_E)
         # z_E = pca.transform(z_E)
@@ -177,12 +160,7 @@ class Evaluation():
         self.comparison_plot(z_h, prior_z, labels = [r"$z \sim p_{h}(z|x)$", r"$z' \sim p(z0|x)$"], path = self.latent_pics, plotname = "overgaussian_zh_vs_priorZ", epo = epoch)
         self.kde_plot(z_h, prior_z, labels = [r"$z \sim p_{h}(z|x)$", r"$z' \sim p(z0|x)$"], path = self.latent_pics, plotname = "overgaussian_kde_zh_vs_priorZ", epo = epoch)
 
-        # 2)
-        # self.comparison_plot(z_h, z_E, labels = [r"$z \sim p_{h}(z)$", r"$z \sim q(z|x)$"], path = self.latent_pics, plotname = "Sampled_zh_vs_posteriorZ", epo = epoch)
-        # self.kde_plot(z_h, z_E, labels = [r"$z \sim p_{h}(z)$", r"$z \sim q(z|x)$"], path = self.latent_pics, plotname = "kde_Sampled_zh_vs_posteriorZ", epo = epoch)
-        
         # 3)
-        # self.structural_plot(z_h, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "Sampled_ZH_with_time", epo = epoch)
         self.structural_plot(z_E, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "posteriorZ_X", epo = epoch)
         self.structural_plot(z0_E, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "posteriorZ0_X", epo = epoch)
 
@@ -190,18 +168,13 @@ class Evaluation():
         self.structural_plot(z_h, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "overgaussian_Z_X", epo = epoch)
         # Code represenataions
         if c_E.shape[-1] >= 2:
-            # c_Q = (c_Q - c_Q.mean(dim = 0, keepdim = True)) / torch.clamp(c_Q.std(dim = 0, keepdim = True), min=1e-6) 
-            # c_E = (c_E - c_E.mean(dim = 0, keepdim = True)) / torch.clamp(c_E.std(dim = 0, keepdim = True), min=1e-6) 
             if discrete:
                 # Get the categorical labels of p(c)
-                # prior_c_labels = torch.argmax(F.softmax(prior_c[:,-1,:], dim = -1), dim = -1).squeeze().detach().cpu().numpy() # (N,)
-                # prior_c_labels = torch.argmax(F.softmax(prior_c[:,-1,:], dim = -1), dim = -1).squeeze().detach().cpu().numpy() # (N,)
                 prior_c_labels = torch.argmax(prior_c[:,-1,:], dim = -1).squeeze().detach().cpu().numpy()
             else: 
                 prior_c_labels = None
             # TODO in case of prior_c is discrete
             # Consider the last position only since sliding window is applied (i.e., the rest will be redundant)
-            # prior_c, c_E, c_Q = prior_c.detach().cpu().numpy()[:,-1,:], c_E.detach().cpu().numpy()[:,-1,:], c_Q.detach().cpu().numpy()[:,-1,:] # (N,dc)
             prior_c, c_E, c_Q = prior_c.detach().cpu().numpy()[:,-1,:] if not discrete else None, c_E.detach().cpu().numpy()[:,-1,:], c_Q.detach().cpu().numpy()[:,-1,:] # (N,dc)
 
             # PCA on C
@@ -492,7 +465,7 @@ class Evaluation():
                     plt.close(fig)
     def forecasting_plot(self, x, pred, x_sta, 
                          t_pred, t_sta, uncertainty, epoch = "", title = "",
-                         num_channel = 2):
+                         num_channel = 2,  x_ori= None):
         lw = 2.5
         channel_to_plot = [5,6, 1, 2] # 9
         last_t = x.shape[0]
@@ -519,15 +492,7 @@ class Evaluation():
                 axes.plot(range(0, t_sta+1), x[:t_sta+1,c], c = "red", linewidth=2.0, alpha=1, label = r"Observed $X$")
                 axes.plot(range(t_sta, t_pred+1), x[t_sta:t_pred+1,c], c = "red", linewidth=1.5, alpha=0.3, ls = "--")
                 axes.plot(range(t_pred, last_t), x[t_pred:,c], c = "red", linewidth=1.5, alpha=0.3, ls = "--")
-                
-                # axes.plot(range(t_sta-1, t_pred), np.concatenate((x[t_sta-1:t_sta,c],x_sta[:,c]), axis = 0), c = "green", 
-                #         linewidth=1.5, alpha=1.0, label = r"Stationarized $\hat{X}$")
-                
-                # # 3 - pred stationary x
-                # # - from t_pred to last bold 
-                # axes.plot(range(t_pred-1, pred.shape[0] + t_pred), np.concatenate((x_sta[-1:,c], pred[:,c])), c = "blue", 
-                #         linewidth=1.5, alpha=1.0, label = r"Predicted $\bar{X}$") 
-                
+
                 # 2 - stationarized x
                 # - from t_sta to t_pred bold (-- ls)
                 axes.plot(range(t_sta, t_pred+1), np.concatenate((x_sta[:,c], pred[0:1,c]), axis = 0), c = "green", 
@@ -544,11 +509,14 @@ class Evaluation():
                 #         facecolor='wheat', alpha=0.5)
                 
                 
-                plt.xlabel("Time", fontsize=20, fontweight='bold')
-                plt.ylabel("Magnitude", fontsize=20, fontweight='bold')
-                plt.xticks(fontweight='bold', fontsize = 20)   
-                plt.yticks(fontweight='bold', fontsize = 20)
-                legend = axes.legend(fontsize=20, loc='upper center', # bbox_to_anchor=(0.5, 1.1),
+                plt.xlabel("Time", fontsize=25, fontweight='bold')
+                plt.ylabel("Magnitude", fontsize=25, fontweight='bold')
+                plt.xticks(fontweight='bold', fontsize = 25)   
+                plt.yticks(fontweight='bold', fontsize = 25)
+                legend = axes.legend(fontsize=25, 
+                                    loc='lower center',  # This is relative to the bbox
+                                    bbox_to_anchor=(0.5, 1.02),
+                                    #  loc='upper center', # bbox_to_anchor=(0.5, 1.1),
                                      edgecolor='black', facecolor='white',
                                     frameon=True,  # Ensures the frame is on
                                     framealpha=1,  # Makes the frame completely opaque
@@ -576,20 +544,23 @@ class Evaluation():
                 # 2 - stationary x
                 # - from t_sta to t_pred bold (-- ls)
                 axes.plot(range(t_sta, t_pred+1), np.concatenate((x_sta[:,c], pred[0:1,c]), axis = 0), c = "green", 
-                        linewidth=lw, alpha=1.0, label = r"Stationarized $\hat{X}$")
+                        linewidth=lw, alpha=1.0, label = r"Stationarized $\hat{X}$", marker = "o")
                 
                 # 3 - pred stationary x
                 # - from t_pred to last transparant 
                 axes.plot(range(t_pred, pred.shape[0] + t_pred), pred[:,c], c = "blue", 
-                        linewidth=lw, alpha=1.0, label = r"Predicted $\bar{X}$")
+                        linewidth=lw, alpha=1.0, label = r"Predicted $\bar{X}$", marker = "^")
                 axes.fill_between(range(t_pred, pred.shape[0] + t_pred), lower_bound_pred[:,c], upper_bound_pred[:,c], 
-                                color='royalblue', alpha=0.6, label="95% CI")
+                                color='royalblue', alpha=0.4, label="95% CI", edgecolor='royalblue', linewidth=0.5)
                 
-                plt.xlabel("Time", fontsize=20, fontweight='bold')
-                plt.ylabel("Magnitude", fontsize=20, fontweight='bold')
-                plt.xticks(fontweight='bold', fontsize = 20)   
-                plt.yticks(fontweight='bold', fontsize = 20)
-                legend = axes.legend(fontsize=20, loc='upper center', #bbox_to_anchor=(0.5, 1.1),
+                plt.xlabel("Time", fontsize=25, fontweight='bold')
+                plt.ylabel("Magnitude", fontsize=25, fontweight='bold')
+                plt.xticks(fontweight='bold', fontsize = 25)   
+                plt.yticks(fontweight='bold', fontsize = 25)
+                legend = axes.legend(fontsize=25, 
+                                     loc='lower center',  # This is relative to the bbox
+                                    bbox_to_anchor=(0.5, 1.02),
+                                    #  loc='upper center', #bbox_to_anchor=(0.5, 1.1),
                                      edgecolor='black', facecolor='white',
                                     frameon=True,  # Ensures the frame is on
                                     framealpha=1,  # Makes the frame completely opaque
@@ -599,8 +570,7 @@ class Evaluation():
                 plt.savefig(os.path.join(self.data_pics, f"fore_{title}_channel_{c}_epoch{epoch}_time{t_pred}.png" ))    
                 plt.clf()   
                 plt.close(fig)
-            # if c+1 >= num_channel:
-            #     break;
+
     def info_qualitative_analysis(self, 
                             prior_z, z_h, z_E,
                             prior_c, c_E, c_gt, c_Q,
@@ -614,19 +584,7 @@ class Evaluation():
         InfoGAN
         
         '''
-        # # print(prior_z.shape)
-        # # print(z_h.shape)
-        # # print(z_E.shape)
-        
-        # # print(prior_c.shape)
-        # # print(c_E.shape)
-        # # print(c_gt.shape)
-        # # print(time_ind.shape)
-        
-        # print("prior_c in eval", prior_c.mean())
-        # print("C_E in eval", c_E.mean())
-        # print("C_Q in eval", c_Q.mean())
-        
+
         if z_h is not None:
             self.logger.info(f"Computing plots (epoch = {epoch}) ... ")
             # Latent represenataions
@@ -640,17 +598,10 @@ class Evaluation():
             
             # 1)
             self.comparison_plot(z_h, prior_z, labels = [r"$p_{h}(z)$", r"$p(z')$"], path = self.latent_pics, plotname = "zh_vs_priorZ", epo = epoch)
-            # 2)
-            # self.comparison_plot(z_h, z_E, labels = [r"$p_{h}(z)$", r"$q_{E}(z|x)$"], path = self.latent_pics, plotname = "zh_vs_posteriorZ", epo = epoch)
-            
-            # 3)
-            # self.structural_plot(z_h, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "posteriorZ_with_time", epo = epoch)
 
         # Code represenataions
         if not discreteuniform:
             if prior_c.shape[-1] >= 2:
-                # c_Q = (c_Q - c_Q.mean(dim = 0, keepdim = True)) / torch.clamp(c_Q.std(dim = 0, keepdim = True), min=1e-6) 
-
                 if discrete:
                     # Get the categorical labels of p(c)
                     prior_c_labels = torch.argmax(F.softmax(prior_c[:,-1,:], dim = -1), dim = -1).squeeze().detach().cpu().numpy() # (N,)
@@ -664,8 +615,6 @@ class Evaluation():
                     pca.fit(np.concatenate((prior_c, c_Q), axis = 0))
                     prior_c, c_Q = pca.transform(prior_c), pca.transform(c_Q) # (N,2)
             
-                # 5)
-                # self.comparison_plot(prior_c, c_E, aux = prior_c_labels, labels = [r"$p(c)$", r"$q_{C}(c|x)$"], path = self.code_pics, plotname = "pc vs posteriorC", epo = epoch)
                 # 5.2)
                 self.comparison_plot(prior_c, c_Q, aux = prior_c_labels, labels = [r"$p(c)$", r"$q_{Q}(c|x)$"], path = self.code_pics, plotname = "pc vs posteriorC_Q", epo = epoch)
                 
@@ -698,14 +647,7 @@ class Evaluation():
         VAE
         '''
         self.logger.info(f"Computing plots (epoch = {epoch}) ... ")
-        # Latent represenataions
-        # Normalize z_h for comparison with the prior (mean 0 std 1)
-        # if z_h is not None:
-        #     z_h = (z_h - z_h.mean(dim = 0, keepdim = True)) / torch.clamp(z_h.std(dim = 0, keepdim = True), min=1e-6) 
-        # z_E = (z_E - z_E.mean(dim = 0, keepdim = True)) / torch.clamp(z_E.std(dim = 0, keepdim = True), min=1e-6) 
-        # z0 = (z0 - z0.mean(dim = 0, keepdim = True)) / torch.clamp(z0.std(dim = 0, keepdim = True), min=1e-6) 
-        # z_h_z0 = (z_h_z0 - z_h_z0.mean(dim = 0, keepdim = True)) / torch.clamp(z_h_z0.std(dim = 0, keepdim = True), min=1e-6) 
-
+        # Latent represenataions       
         # PCA on z
         if z_h is not None:
             z_h = z_h.detach().cpu().numpy()
@@ -748,10 +690,6 @@ class Evaluation():
         '''
         self.logger.info(f"Computing plots (epoch = {epoch}) ... ")
         # Latent represenataions
-        # Normalize z_h for comparison with the prior (mean 0 std 1)
-        # if z_h is not None:
-        #     z_h = (z_h - z_h.mean(dim = 0, keepdim = True)) / torch.clamp(z_h.std(dim = 0, keepdim = True), min=1e-6) 
-        # z_E = (z_E - z_E.mean(dim = 0, keepdim = True)) / torch.clamp(z_E.std(dim = 0, keepdim = True), min=1e-6) 
         # PCA on z
         if z_h is not None:
             z_h = z_h.detach().cpu().numpy()
@@ -766,9 +704,7 @@ class Evaluation():
         # 1)
         if z_h is not None:
             self.comparison_plot(z_E, z_h, labels = [r"$p_{E}(z)$", "reparam"], path = self.latent_pics, plotname = "zE_vs_ze_gaus", epo = epoch)
-        # 2)
-        # self.comparison_plot(z_h, z_E, labels = [r"$p_{h}(z)$", r"$q_{E}(z|x)$"], path = self.latent_pics, plotname = "zh_vs_posteriorZ", epo = epoch)
-        
+     
         # 3)
         if z_h is not None:
             self.structural_plot(z_h, time_ind.squeeze().detach().cpu().numpy(), aux_name = "Time", path = self.latent_pics, plotname = "posteriorZ_on_Gaussian_with_time", epo = epoch)
@@ -791,3 +727,121 @@ class Evaluation():
         plt.savefig(os.path.join(self.data_pics, f"instance_{title}_rul.png" ))    
         plt.clf()   
         plt.close(fig)
+        
+    def rul_plot_all(self, pred, y):
+        y= y.view(-1)
+        pred = pred.view(-1)
+        fig = plt.figure(figsize=(12, 8), 
+                            dpi = 600) 
+        axes = fig.subplots()
+        
+        axes.plot(y[:].detach().cpu().numpy(), c = "blue", linewidth=1.5, alpha=0.8, label = "Ground Truth", ls = "--", marker="^")
+        axes.plot(pred[:].detach().cpu().numpy(), c = "red", linewidth=1.5, alpha=1.0, label = "Prediction", marker = "o")
+
+        plt.xlabel("Instance", fontsize=20, fontweight='bold')
+        plt.ylabel("Remaining useful life", fontsize=20, fontweight='bold')
+        plt.xticks(fontweight='bold', fontsize = 20)   
+        plt.yticks(fontweight='bold', fontsize = 20)
+        legend = axes.legend(fontsize=20, 
+                                     loc='lower center',  # This is relative to the bbox
+                                    bbox_to_anchor=(0.5, 1.02),
+                                    #  loc='upper center', #bbox_to_anchor=(0.5, 1.1),
+                                     edgecolor='black', facecolor='white',
+                                    frameon=True,  # Ensures the frame is on
+                                    framealpha=1,  # Makes the frame completely opaque
+                                    fancybox=True,
+                                    ncol = 2)
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.data_pics, f"rul_all_comp.png" ))    
+        plt.clf()   
+        plt.close(fig)
+        
+        # Sorted version 
+        
+        sorted_indices = torch.argsort(y, dim=0)
+
+        # Step 2: Apply the sorted indices to both B and A
+        y_sorted = y[sorted_indices]
+        pred_sorted = pred[sorted_indices]
+        fig = plt.figure(figsize=(12, 8), 
+                            dpi = 600) 
+        axes = fig.subplots()
+        
+        axes.plot(y_sorted[:].detach().cpu().numpy(), c = "blue", linewidth=1.5, alpha=0.8, label = "Ground Truth", ls = "--", marker = "^")
+        axes.plot(pred_sorted[:].detach().cpu().numpy(), c = "red", linewidth=1.5, alpha=1.0, label = "Prediction", marker = "o")
+
+        plt.xlabel("Instance", fontsize=20, fontweight='bold')
+        plt.ylabel("Remaining useful life", fontsize=20, fontweight='bold')
+        plt.xticks(fontweight='bold', fontsize = 20)   
+        plt.yticks(fontweight='bold', fontsize = 20)
+        legend = axes.legend(fontsize=20, 
+                                     loc='lower center',  # This is relative to the bbox
+                                    bbox_to_anchor=(0.5, 1.02),
+                                    #  loc='upper center', #bbox_to_anchor=(0.5, 1.1),
+                                     edgecolor='black', facecolor='white',
+                                    frameon=True,  # Ensures the frame is on
+                                    framealpha=1,  # Makes the frame completely opaque
+                                    fancybox=True,
+                                    ncol = 2)
+        # legend = axes.legend(fontsize=20, loc='upper left', bbox_to_anchor=(0.5, 1.1))
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.data_pics, f"rul_all_comp_sorted.png" ))    
+        plt.clf()   
+        plt.close(fig)
+
+    def rul_plot_all2(self, pred, y):
+        y= y.view(-1)
+        pred = pred.view(-1)
+        t = torch.arange(y.shape[0])
+        # Sorted version 
+        sorted_indices = torch.argsort(y, dim=0)
+
+        # Step 2: Apply the sorted indices to both B and A
+        y_sorted = y[sorted_indices]
+        pred_sorted = pred[sorted_indices]
+        error = (y_sorted - pred_sorted).abs()
+        
+        fig, (ax_main, ax_err) = plt.subplots(
+                                            2, 1,
+                                            sharex=True,
+                                            figsize=(12, 8),
+                                            dpi=600,
+                                            gridspec_kw={'height_ratios': [3, 1]}
+                                                )
+        # --- Top subplot: prediction vs ground truth ---
+        ax_main.plot(y_sorted[:].detach().cpu().numpy(), c = "orange", linewidth=1.5, alpha=0.8, label = "Ground Truth", ls = "--", marker = "^")
+        ax_main.plot(pred_sorted[:].detach().cpu().numpy(), c = "blue", linewidth=1.5, alpha=1.0, label = "Prediction", marker = "o")
+        ax_main.set_ylabel("Remaining Useful Life", fontsize = 20, fontweight = 'bold')
+        ax_main.tick_params(axis='both', labelsize=20)
+        for label in ax_main.get_xticklabels() + ax_main.get_yticklabels():
+            label.set_fontweight('bold')
+        ax_main.legend(fontsize=20, 
+                        loc='upper left',  # This is relative to the bbox
+                            edgecolor='black', facecolor='white',
+                        frameon=True,  # Ensures the frame is on
+                        framealpha=1,  # Makes the frame completely opaque
+                        fancybox=True,
+                        ncol = 2)
+        ax_main.grid(True)
+
+        # --- Bottom subplot: error ---
+        ax_err.fill_between(t, 0, error.detach().cpu().numpy(), color='limegreen', alpha=0.3, label='Absolute Error')
+        ax_err.plot(error.detach().cpu().numpy(), color='green', linewidth=1)
+        ax_err.set_ylabel("Error", fontsize = 20, fontweight = 'bold')
+        ax_err.set_xlabel("Instance", fontsize = 20, fontweight = 'bold')
+        ax_err.set_ylim(0, 0.5)
+        ax_err.tick_params(axis='both', labelsize=20)
+        for label in ax_err.get_xticklabels() + ax_err.get_yticklabels():
+            label.set_fontweight('bold')
+        ax_err.legend(fontsize=20, 
+                                     loc='upper left',  # This is relative to the bbox
+                                     edgecolor='black', facecolor='white',
+                                    frameon=True,  # Ensures the frame is on
+                                    framealpha=1,  # Makes the frame completely opaque
+                                    fancybox=True)
+        ax_err.grid(True)
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.data_pics, f"rul_all_comp_sorted2.png" ))    
+        plt.clf()   
+        plt.close(fig)
+        

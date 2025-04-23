@@ -140,19 +140,7 @@ class OCIR(nn.Module):
         KL(q(zk | x), p(z)) = E_{q(zk|x)}[log q(zk|x) - log p(z)]
                             = E_{q(z0|x)}[log q(z0|x) - sum_{k=1}^K log |det(df_k/dz_{k-1})| - log p(zk)],  with respect to q(z0|x)
                             -> -KL = E_{q(z0|x)}[- log q(z0|x) + sum_{k=1}^K log |det(df_k/dz_{k-1})| + log p(zk)]  --> we want to minimize it in full ELBO form  
-        '''
-        # # logq(z0|x) 
-        # log_qz0 = self.prior_z.log_prob(z0, mu, log_var)
-        # # logq(zk|x) 
-        # log_qz = log_qz0 - logdet
-        
-        # # logq(zK)
-        # log_pz = self.prior_z.log_prob(z)
-        # # KL div & logdet
-        # kl_div =  log_qz - log_pz # .mean()
-        # kl_div =  (log_qz-  log_pz).mean() # .mean()
-        
-        # @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+        '''        
         log_qz0 = self.unit_MVG_Guassian_log_prob(eps)
         log_qz0 -= torch.sum(0.5 * log_var, dim=1)
         log_qz0 -= logdet
@@ -180,8 +168,8 @@ class OCIR(nn.Module):
     
     def L_G_generator(self, x):
         sample_size = x.shape[0]
-        x_gen, set_latent_samples, log_det = self.G.generation(sample_size) # TODO need to add reverse KL div
-        z, z0, c, c_logit = set_latent_samples #TODO yield logit samples when gumbel is used
+        x_gen, set_latent_samples, log_det = self.G.generation(sample_size) 
+        z, z0, c, c_logit = set_latent_samples 
         
         gen = self.D(x_gen)
         q_code_mu, q_code_logvar = self.Q(x_gen)
@@ -199,8 +187,7 @@ class OCIR(nn.Module):
             hc = x_gen
         mu, logvar, _ = self.f_E(h)
         c_gen, c_logvar = self.f_C(hc)
-        # if self.c_kl:
-        #     c_gen = self.f_C.reparameterization(c_gen, c_logvar)
+
         # Generator loss
         if gen.dim() == 2:
             gen_loss = 0.5 * torch.mean((gen - 1)**2)    
@@ -209,11 +196,6 @@ class OCIR(nn.Module):
 
         # CC and MMI for Q, G  
         cc_loss_z = self.prior_z.NLL(z0, mu, logvar, "mean") # soft fitting
-        
-        # eps = self.prior_z.sample(mu.shape)
-        # stds = torch.exp(0.5 * logvar)
-        # z_pred = eps * stds + mu
-        # cc_loss_z = self.prior_z.hard_fitting(z0, mu) # One-to-one cycle consistency  # TODO consider reparameterizing mu and doing the cc loss
         
         if self.c_type == "continuous":
             if self.code_posterior_param == "soft":
@@ -232,19 +214,7 @@ class OCIR(nn.Module):
             # CE
             cc_loss_c = self.prior_c.cross_entropy_loss(c_logit if c_logit is not None else c, c_gen)
             NLL_loss_Q = self.prior_c.cross_entropy_loss(c_logit if c_logit is not None else c, q_code_mu)
-           
-           
-            # Hard fitting # TODO 
-            # if isinstance(self.prior_c, distributions.ContinuousCategorical):
-            #     cc_loss_c = self.prior_c.hard_fitting(c_logit if c_logit is not None else c, c_gen)
-            #     NLL_loss_Q = self.prior_c.hard_fitting(c_logit if c_logit is not None else c, q_code_mu)
-            # else:
-            #     raise NotImplementedError("")
-            
-        # print("gen_loss", gen_loss)
-        # print("NLL_loss_Q", NLL_loss_Q)
-        # print("cc_loss_z", cc_loss_z)
-        # print("cc_loss_c", cc_loss_c)
+
         return gen_loss + (NLL_loss_Q) + ((cc_loss_z + cc_loss_c)), \
                 [gen_loss, NLL_loss_Q , cc_loss_z,  cc_loss_c]
     

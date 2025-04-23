@@ -25,44 +25,13 @@ class Decoder(nn.Module):
         self.dc2 = dc2
         self.num_heads = num_heads
 
-        # self.latent_decoder = bs.rnn_decoding_seqtoken(dz, self.dc,
-        #                                                       hidden_dim= d_model,
-        #                                                       window = window,
-        #                                                       seq_out=False)
         self.latent_decoder = bs.wide_decoding(dz, self.dc, hidden_dim= d_model,
                                                window = window, dc2 = self.dc2)
-        # self.latent_decoder = bs.comb_decoding(dz, self.dc, hidden_dim= d_model,
-        #                                        window = window)
-        
-        # self.latent_decoder = bs.rnn_decoding(dz, self.dc,
-        #                                                       hidden_dim= d_model,
-        #                                                       window = window)
-        # self.latent_decoder = bs.rnn_decoding_eq(dz, self.dc, 
-        #                                                 hidden_dim = d_model, 
-        #                                                 window = window)
-      
-        # self.latent_decoder = bs.decoding_tokens(dz, self.dc,
-        #                                         hidden_dim= d_model,
-        #                                         window = window)
-        
         TransformerDecoder = [bs.TransformerEncoderBlock(embed_dim = d_model, num_heads = self.num_heads,
                                                                        ff_hidden_dim = int(d_model * 3), dropout = 0.15,
                                                                        prenorm = True) for _ in range(self.depth)]
         self.TransformerDecoder = nn.ModuleList(TransformerDecoder)
-        
-        # TransformerDecoder = [bs.TCN_net(max_input_length = window, # This determins the maximum capacity of sequence length
-        #                             input_size = d_model,
-        #                             kernel_size = 3,
-        #                             num_filters = d_model,
-        #                             num_layers = None,
-        #                             dilation_base = 2,
-        #                             norm= 'weightnorm', # "none1" 
-        #                             nr_params = 1,
-        #                             dropout= 0.1) for _ in range(self.depth)]
-        # self.TransformerDecoder = nn.ModuleList(TransformerDecoder)
 
-
-        
         self.final_layer = bs.Linear(d_model, dx, bias=False)
         
         # self.layernorm = nn.LayerNorm(dz)

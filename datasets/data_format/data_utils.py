@@ -174,19 +174,19 @@ def sw_function(x, ocs, w_T):
     c_x, c_ocs = seq_X.shape[1], seq_ocs.shape[1]
     
     # Left padding with first observation + noise
-    pad_x = np.tile(seq_X[0], (w_T - 1, 1)) + np.random.normal(0, 0.02, (w_T - 1, c_x))
+    pad_x = np.tile(seq_X[0], (w_T - 1, 1)) #+ np.random.normal(0, 0.02, (w_T - 1, c_x))
     pad_ocs = np.tile(seq_ocs[0], (w_T - 1, 1))
     
     # Padded sequences
-    padded_X = np.vstack([pad_x, seq_X])
-    padded_OCS = np.vstack([pad_ocs, seq_ocs])
+    padded_X = seq_X #np.vstack([pad_x, seq_X])
+    padded_OCS = seq_ocs # np.vstack([pad_ocs, seq_ocs])
     
     # Apply sliding window
     windowed_x_k = np.lib.stride_tricks.sliding_window_view(padded_X, (w_T, c_x)).squeeze(1) # (num_w, leng_w, c)
     windowed_ocs_k = np.lib.stride_tricks.sliding_window_view(padded_OCS, (w_T, c_ocs)).squeeze(1)
     
     # Generate time indices
-    time_index_k = np.arange(1, L_k + 1).reshape(-1, 1)
+    time_index_k = np.arange(1, windowed_x_k.shape[0] + 1).reshape(-1, 1)
     return windowed_x_k, windowed_ocs_k, time_index_k
 
 def sliding_window(X, ocs, rul, w_T, 
@@ -201,7 +201,7 @@ def sliding_window(X, ocs, rul, w_T,
     for key in keys:
         rul_key = rul[key]
         windowed_x_k, windowed_ocs_k, time_index_k = sw_function(X[key], ocs[key], w_T)
-        
+        rul_key = rul_key[-windowed_x_k.shape[0]:]
         if not in_dictionary:
             windowed_X.append(windowed_x_k)
             OCS.append(windowed_ocs_k)
@@ -347,7 +347,7 @@ def format_testing_data(test_p = None, testing_ocs = None, testing_rul = None,
         # Full test set
         windowed_CM, windowed_ocs, windowed_time = sw_function(test_p[s], testing_ocs[s], T)
         # Piece-wise linear
-        rul_ = np.flip(np.arange(test_p[s].shape[0]))
+        rul_ = np.flip(np.arange(windowed_CM.shape[0]))
         rul_ += testing_rul[s-1]
         # Rectifification
         rul_ = np.where(rul_ > rectification, rectification, rul_)
@@ -394,7 +394,6 @@ def plot_data(x, inst = 1, path_ = None):
                             dpi = 600) 
             axes = fig.subplots()
             axes.plot(X[:,c], c = "blue", linewidth=1, alpha=1)
-            # plt.title(title_)
             plt.xlabel("Time")
             plt.ylabel("Magnitude")
             plt.xticks(fontweight='bold', fontsize = 15)   

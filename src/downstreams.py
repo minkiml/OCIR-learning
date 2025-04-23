@@ -45,7 +45,7 @@ class RulEstimator(nn.Module):
         rul_pred = self.forward(x, tidx)
 
         # TODO CHECK the shape of the two args. 
-        return F.mse_loss(rul_pred, true_rul)  # l1 loss
+        return F.mse_loss(rul_pred, true_rul)  
         
 class Forecaster(nn.Module):
     ''' 
@@ -73,8 +73,8 @@ class Forecaster(nn.Module):
             # src_utils.init_embedding(self.time_embedding)
         self.pos_enc = transformers.SinCosPositionalEncoding(d_model, (W * self.T) + W)
         forecaster = [transformers.TransformerEncoderBlock(embed_dim = d_model, num_heads = 4,
-                                                        ff_hidden_dim = int(d_model * 3), dropout = 0.10,
-                                                        prenorm =True) for _ in range(self.depth)]
+                                                        ff_hidden_dim = int(d_model * 3), dropout = 0.05,
+                                                        prenorm =False) for _ in range(self.depth)]
         self.forecaster = nn.ModuleList(forecaster)
         
         # Just like patch-tst, which results in a very wide final projection layer. 
@@ -156,7 +156,7 @@ class DataTrajectory(nn.Module):
             z, z_log_var, _ = self.encoder(x, tidx)
             z = z.view(N,W,-1)
             z_log_var = z_log_var.view(N,W,-1)
-        return z, None
+        return z, z_log_var
     
     def Loss_trj(self, y, x, tidx = None):
         N = y.shape[0]
@@ -168,7 +168,7 @@ class DataTrajectory(nn.Module):
         log_prob -= 0.5 * np.log(2 * np.pi)  # Constant term
         log_prob -= log_std  
         log_prob = -log_prob.sum(dim=-1)  # Sum over dimensions
-        loss_nll = torch.mean(log_prob) #/ N
+        loss_nll = torch.mean(log_prob) # / N
         
         if self.time_emb:
             tidx_y = torch.arange(1, self.H + 1) * self.T  # Shape: (H,)

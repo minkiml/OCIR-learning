@@ -182,19 +182,6 @@ class SharedEncoder(nn.Module):
                                                         prenorm =True) for _ in range(self.depth)]
         self.TransformerEncoder = nn.ModuleList(TransformerEncoder)
         
-        # TransformerEncoder = [tcns.TCN_net(max_input_length = window, # This determins the maximum capacity of sequence length
-        #                                     input_size = d_model,
-        #                                     kernel_size = 3,
-        #                                     num_filters = d_model,
-        #                                     num_layers = None,
-        #                                     dilation_base = 2,
-        #                                     norm= 'weightnorm', # "none1" 
-        #                                     nr_params = 1,
-        #                                     dropout= 0.1) for _ in range(self.depth)]
-        # self.TransformerEncoder = nn.ModuleList(TransformerEncoder)
-
-        
-        
         if z_projection == "spc":
             # BERT-style special token (compressive token) is done as discriminative score for sequence
             self.compressive_token = nn.Parameter(torch.randn(1,1,d_model))

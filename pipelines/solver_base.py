@@ -49,21 +49,6 @@ class Solver(object):
             raise NotImplementedError("")
             load_circle()
         else: 
-            # if self.task == "data_trj":
-            #     self.training_data, self.val_data, self.testing_data, _, _ = load_CMAPSS(dataset = self.dataset,
-            #                                                         data_path = self.data_path,
-            #                                                         task = "RL",
-            #                                                         T = self.window,
-            #                                                         H = self.H,
-            #                                                         H_lookback = self.hyper_lookback,
-            #                                                         rectification = 125,
-            #                                                         batch_size = self.batch,
-            #                                                         normalize_rul = True,
-            #                                                         vis = False,
-            #                                                         logger = self.logger,
-            #                                                         plot = self.evaluation,
-            #                                                         valid_split= self.valid_split)
-            # else:
             self.training_data, self.val_data, self.testing_data, self.full_test_set = load_CMAPSS(dataset = self.dataset,
                                                                 data_path = self.data_path,
                                                                 task = "RL",
@@ -73,7 +58,7 @@ class Solver(object):
                                                                 rectification = 125,
                                                                 batch_size = self.batch,
                                                                 normalize_rul = True,
-                                                                vis = True,
+                                                                vis = False,
                                                                 logger = self.logger,
                                                                 plot = self.evaluation,
                                                                 valid_split= self.valid_split)

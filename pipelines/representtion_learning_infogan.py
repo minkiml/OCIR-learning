@@ -77,16 +77,6 @@ class InfoGANPipeline(solver_base.Solver):
                 if self.infogan.shared_net is not None:
                     ut.zeroout_gradient([self.infogan.shared_net])
                 ii = 0
-                # for name, param in (self.infogan.G.h.named_parameters()):
-                #     if "weight" in name:
-                #         print(f"Q: Epoch {epoch}, {name} grad norm: {param.data}")
-                #         ii += 1
-                #         if ii == 2:
-                #             break;
-                    # if param.grad is not None:
-                    #     print(f"Q: Epoch {epoch}, {name} grad norm: {param.grad.norm().item()}")
-                    # else:
-                    #     print("Q: None")
                 for m in reversed(opt_G):
                     if m: m.step()
 
@@ -159,17 +149,13 @@ class InfoGANPipeline(solver_base.Solver):
         self.evaluation.recon_plot(x[0,:,:], X_gen[0,:,:], label = ["true", "gen"], epoch = str(epoch))
         
         # Memory intensive if the total sample size is large
-        # ALL_ZE = torch.concatenate((ALL_ZE), dim = 0)
         ALL_Z = torch.concatenate((ALL_Z), dim = 0)
         if ALL_ZH is not None:
             ALL_ZH = torch.concatenate((ALL_ZH), dim = 0)
-            # print(ALL_ZH.shape)
-        # ALL_CE = torch.concatenate((ALL_CE), dim = 0)
         ALL_C = torch.concatenate((ALL_C), dim = 0)
         ALL_Q = torch.concatenate((ALL_Q), dim = 0)
         ALL_CGT = torch.concatenate((ALL_CGT), dim = 0)
         ALL_tidx = torch.concatenate((ALL_tidx), dim = 0)
-        # self.logger.info(f"Vali: Loss R:{Loss_R_vali.avg: .4f}, Loss Disc:{Loss_Disc_vali.avg: .4f}, Loss G: {Loss_G_vali.avg: .4f}")
 
         self.evaluation.info_qualitative_analysis(ALL_Z, ALL_ZH, ALL_ZE,
                                              ALL_C, ALL_CE, ALL_CGT, ALL_Q,
@@ -226,9 +212,7 @@ class InfoGANPipeline(solver_base.Solver):
                                                                         final_lr = self.final_lr,
                                                                         start_wd = self.start_wd,
                                                                         final_wd = self.final_wd)
-        # for opt in [ opt_Disc, opt_G]:
-        #     for i, param_group in enumerate(opt.param_groups):
-        #         self.logger.info(f"Group {i}: {param_group}")
+
         return [opt_Disc, scheduler_Disc, wd_scheduler_Disc], \
                [opt_G, scheduler_G, wd_scheduler_G]     
     

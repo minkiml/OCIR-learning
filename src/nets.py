@@ -18,15 +18,8 @@ class InfoGAN(nn.Module):
         self.code_posterior_param = c_posterior_param
         # Prior Distributions p(z') and p(c)
         self.prior_z = md.DiagonalGaussian(dz, mean = 0, var = 1, device=device)
-        # TODO there is distributional mismatch if use gasNLL or implement gaussian one for c 
         self.prior_c = md.UniformDistribution(device=device) if c_type == "continuous" \
                 else md.DiscreteUniform(dc, onehot = True, device=device) 
-                # else distributions.ContinuousCategorical(dc, 
-                #                                         gumbel_temperature= 0.3,
-                #                                         decay_rate= 0.95,
-                #                                         dist="uniform",
-                #                                         device=device)
-                # else distributions.DiscreteUniform(dc, onehot = True, device=device) 
         self.h = md.LatentFlow(dz, self.prior_z)
         
         self.G = md.Decoder(dx=dx, dz=dz, dc=dc, window=window, d_model=d_model,
@@ -86,14 +79,6 @@ class InfoGAN(nn.Module):
         log_p_z = self.unit_MVG_Guassian_log_prob(z)
         
         reverse_kl = torch.mean(log_qz0) - torch.mean(log_p_z)
-        
-        #####
-        #####
-        #entropy = self.prior_z.H(log_var=None) # a constant
-        #neg_ELBO = - torch.mean(entropy + logdet)
-
-        # reverse_kl *= annealing
-        
         return gen_loss + (0.2 * NLL_loss_Q) + (annealing * reverse_kl ), [gen_loss, NLL_loss_Q, annealing * reverse_kl]
     
     def unit_MVG_Guassian_log_prob(self, sample):
@@ -138,22 +123,10 @@ class VAE(nn.Module):
         # Encoding
         mu, log_var, zin = self.f_E(x, tidx)
         z, logdet, z0 = self.f_E.reparameterization_NF(mu, log_var)
-        
-        # eps = self.prior_z.sample(mu.shape)
-        # stds = torch.exp(0.5 * log_var)
-        # z = eps * stds + mu
-        
-        # c, c_logvar = self.f_C(x)
         # Decoding
         x_rec = self.f_D(z, c = cond, zin = zin)
         
-        # print("mu:  ", mu.mean())
-        # print("log_var:  ", log_var.mean()) 
-        # print("c", c)
-        # print("c_logvar", c_logvar) 
-        
         # Reconstruction & CC is implicitly made since G and f_D share the parameters
-        # recon = F.mse_loss(x_rec, x, reduction = 'mean') # smooth_l1_loss 
         recon = F.mse_loss(x_rec, x, reduction = 'sum') / (N)  # smooth_l1_loss 
 
         kl_div = (-0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).sum(-1)).mean()
@@ -178,56 +151,14 @@ class VAE(nn.Module):
         # Decoding
         x_rec = self.f_D(z,c = cond, zin = zin, generation = True)
         
-        # print("mu:  ", mu.mean())
-        # print("log_var:  ", log_var.mean()) 
-        # print("c", c)
-        # print("c_logvar", c_logvar) 
-        
         # # Reconstruction & CC is implicitly made since G and f_D share the parameters
         recon = F.mse_loss(x_rec, x, reduction = 'sum') / (N)  # smooth_l1_loss 
-        
-        ########
-        ########
-        # kl_div = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).sum(-1)
-        # kl_div -= logdet
-        # kl_div = kl_div.mean()
-        
-        
-        # print("z:  ",z)
-        # print("z0:   ",z0)
-        # logq(z'|x), where z' = z0  # Check this objective again
-        
-        ########
-        ########
-        # log_qz0 = self.prior_z.log_prob(z0, mu, log_var)
-        # log_qz = log_qz0 - logdet
-        # # print("log_qz0: ", log_qz0.mean())
-        # # print("logdet", logdet.mean())
-        # log_pz = self.prior_z.log_prob(z)
-        # # KL div & logdet
-        # kl_div =  (log_qz - log_pz).mean() # .mean()
 
-        ########
-        ########
-        # entropy = self.prior_z.H(log_var=log_var)
-        # neg_ELBO = - torch.mean(entropy + logdet)  # kl term in elbo
-        
-        ########
-        ########
         log_qz0 = self.unit_MVG_Guassian_log_prob(eps) # equiv
         log_qz0 -= torch.sum(0.5 * log_var, dim=1)
         log_qz0 -= logdet
         log_p_z = self.unit_MVG_Guassian_log_prob(z)
         kl_div = torch.mean(log_qz0) - torch.mean(log_p_z)
-        
-        
-        ########
-        ######## KL for f_C  TODO
-        # log_qz0 = self.unit_MVG_Guassian_log_prob(eps) # equiv
-        # log_qz0 -= torch.sum(0.5 * log_var, dim=1)
-        # log_qz0 -= logdet
-        # log_p_z = self.unit_MVG_Guassian_log_prob(z)
-        # kl_div = torch.mean(log_qz0) - torch.mean(log_p_z)
         
         return recon + (annealing*kl_div) , [recon, annealing*kl_div]
     
@@ -262,18 +193,11 @@ class AE(nn.Module):
                 device = "cpu"): 
         super(AE, self).__init__()
         self.prior_z = md.DiagonalGaussian(dz, mean = 0, var = 1, device=device)
-        # TODO there is distributional mismatch if use gasNLL or implement gaussian one for c 
         self.prior_c = None 
-        # distributions.UniformDistribution(device=device) if c_type == "continuous" \
-        #                         else distributions.DiscreteUniform(dc, onehot = True, device=device) 
            
         self.f_E = md.LatentEncoder(dx=dx, dz=dz, window=window, d_model=d_model, 
                                     num_heads=num_heads, z_projection=z_projection, 
                                     time_emb=time_emb, encoder_E=encoder_E, p_h=None) 
-        
-        # self.f_C = encoders.CodeEncoder(dx=dx, dc=dc, d_model=d_model, 
-        #                                 c_type=c_type, c_posterior_param=c_posterior_param)
-        
         
         # Decoder
         self.f_D = md.Decoder(dx=dx, dz=dz, dc=dc, window=window, d_model=d_model,
@@ -286,14 +210,8 @@ class AE(nn.Module):
         # beta is a warm-up coefficient for preventing negative 
         # Encoding
         mu, log_var, zin = self.f_E(x, tidx)
-        # c, c_logvar = self.f_C(x)
         # Decoding
         x_rec = self.f_D(mu, c = cond, zin = zin)
-        
-        # print("mu:  ", mu.mean())
-        # print("log_var:  ", log_var.mean()) 
-        # print("c", c)
-        # print("c_logvar", c_logvar) 
         
         # Reconstruction & CC is implicitly made since G and f_D share the parameters
         recon = F.mse_loss(x_rec, x, reduction = 'mean') # smooth_l1_loss 

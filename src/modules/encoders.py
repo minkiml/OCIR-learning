@@ -28,9 +28,8 @@ class LatentEncoder(nn.Module):
                 # Suppose the longest length of cm data could be 520
                 if self.time_emb:
                     self.time_embedding = nn.Embedding(num_embeddings= 550, embedding_dim = d_model)
-                    # src_utils.init_embedding(self.time_embedding)
                 self.pos_enc = transformers.SinCosPositionalEncoding(d_model, window + 2)
-                self.fE_projection = src_utils.Linear(dx, d_model) #transformers.Conv1by1(dx, d_model)
+                self.fE_projection = src_utils.Linear(dx, d_model)
 
                 TransformerEncoder = [transformers.TransformerEncoderBlock(embed_dim = d_model, num_heads = self.num_heads,
                                                                 ff_hidden_dim = int(d_model * 3), dropout = 0.1,
@@ -60,7 +59,7 @@ class LatentEncoder(nn.Module):
         if p_h is None:
             self.mu = src_utils.Linear(d_model, dz , bias=True) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(d_model, dz , bias=True))
         else:
-            self.mu =   src_utils.Linear(d_model, dz , bias=True) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(d_model, dz , bias=True))
+            self.mu = torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(d_model, dz , bias=True)) # src_utils.Linear(d_model, dz , bias=True) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(d_model, dz , bias=True))
             self.logvar = src_utils.Linear(d_model, dz , bias=True) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(d_model, dz , bias=True))
 
         self.p_h = p_h
@@ -73,7 +72,6 @@ class LatentEncoder(nn.Module):
             if self.time_emb:
                 if tidx is not None: 
                     time_token = self.time_embedding(tidx) # (N, 1, d_model)
-                    # print(time_token.device)
                 else:
                     # For generator-to-encoder inference the time index is not known, so time index 0 is assigned as a unknown time. 
                     time_token = self.time_embedding(torch.zeros((N,1), dtype=torch.long).to(x.device)) # zero token
@@ -97,7 +95,6 @@ class LatentEncoder(nn.Module):
             x_emb = x
             for layer in self.TransformerEncoder:
                 x_emb = layer(x_emb)
-            # x_emb = self.TransformerEncoder(x_emb)
 
         if self.z_projection == "spc":
             z = x_emb[:,0,:] # (N, d_modle)
@@ -112,7 +109,6 @@ class LatentEncoder(nn.Module):
             z = self.latent_aggregation(x_emb) # (N, d_modle)
             z_in = None
 
-        # print(z[0:2])
         if self.p_h is None:
             mu = self.mu(z)
             log_var = None
@@ -120,11 +116,6 @@ class LatentEncoder(nn.Module):
             mu = self.mu(z)
             log_var = self.logvar(z) 
 
-            # mu = torch.clamp(mu, min=-1., max=1.)
-            # log_var = torch.clamp(log_var, min=-10., max=0.)
-        # print(mu)
-        # print("mu: ", mu[0:2,:])
-        # print("log_var: ", log_var[0:2,:])
         return mu, log_var, z_in
     
     def reparameterization_NF(self, mu, log_var):
@@ -187,14 +178,7 @@ class CodeEncoder(nn.Module):
         if not self.shared_EC:
             code_encoder = [self.make_MLP() for _ in range(self.depth)]
             self.code_encoder = nn.ModuleList(code_encoder)
-            # self.fC_projection = transformers.Conv1by1(self.dx, self.d_model_c)
-            
             self.fC_projection = src_utils.Linear(dx, d_model) #transformers.Conv1by1(dx, d_model)
-            
-        #     code_encoder = [transformers.TransformerEncoderBlock(embed_dim = d_model, num_heads = 4,
-        #                                                     ff_hidden_dim = int(d_model * 3), dropout = 0.15,
-        #                                                     prenorm =True) for _ in range(self.depth)]
-        #     self.code_encoder = nn.ModuleList(code_encoder)
         else:
             self.code_encoder = self.make_MLP()
             
@@ -226,20 +210,12 @@ class CodeEncoder(nn.Module):
             return logit.view(N,L,self.dc), None
         elif self.c_type == "continuous":
             if self.c_posterior_param == "soft":
-                # code_emb = self.code_mu_logvar(code_emb)
-                # mu, log_var = torch.chunk(code_emb, 2, dim=-1)
                 mu = self.code_mu(code_emb)
                 log_var = self.code_logvar(code_emb)
-                # mu = torch.clamp(mu, min=-1., max=1.)
-                # log_var = torch.clamp(log_var, min=-4, max=0) # TODO not limit?
-                # mu = torch.clamp(mu, min=-1.5, max=1.5)
-                # log_var = torch.clamp(log_var, min=-4, max=0)
                 return mu.view(N,L,self.dc), log_var.view(N,L,self.dc)
             
             else:
                 mu = self.code_mu(code_emb)
-                # mu = torch.clamp(mu, min=-1., max=1.)
-                # mu = torch.clamp(mu, min=-1.5, max=1.5)
                 return mu.view(N,L,self.dc), None
         
     def inference(self, x, logits = False):
@@ -307,13 +283,6 @@ class CodeEncoder_seq(nn.Module):
         if c_type == "discrete":
             self.classifier = src_utils.Linear(self.d_model_c,self.dc, bias=False)
             self.softmax = nn.Softmax(-1)
-        # elif c_type == "continuous":
-        #     # soft fitting
-        #     if self.c_posterior_param == "soft":
-        #         self.code_mu_logvar = src_utils.Linear(self.d_model_c, self.dc * 2, bias=False) #torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(self.d_model_c, self.dc * 2, bias=False))
-        #     # hard fitting
-        #     else: 
-        #         self.code_mu = src_utils.Linear(self.d_model_c,self.dc, bias=False) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(self.d_model_c,self.dc, bias=False))
 
     def forward(self, x, tidx = None):
         N, L, c = x.shape
@@ -354,21 +323,6 @@ class CodeEncoder_seq(nn.Module):
         if self.c_type == "discrete":
             logit = self.classifier(code_emb)
             return logit
-        # elif self.c_type == "continuous":
-        #     if self.c_posterior_param == "soft":
-        #         code_emb = self.code_mu_logvar(code_emb)
-        #         mu, log_var = torch.chunk(code_emb, 2, dim=-1)
-        #         # mu = torch.clamp(mu, min=-1.5, max=1.5)
-        #         # log_var = torch.clamp(log_var, min=-4, max=0) # TODO not limit?
-        #         # mu = torch.clamp(mu, min=-1.5, max=1.5)
-        #         # log_var = torch.clamp(log_var, min=-4, max=0)
-        #         return mu.view(N,L,self.dc), log_var.view(N,L,self.dc)
-            
-        #     else:
-        #         mu = self.code_mu(code_emb)
-        #         # mu = torch.clamp(mu, min=-1.5, max=1.5)
-        #         # mu = torch.clamp(mu, min=-1.5, max=1.5)
-        #         return mu.view(N,L,self.dc), None
         
     def inference(self, x, logits = False):
         c = self.forward(x)

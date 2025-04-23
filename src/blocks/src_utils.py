@@ -27,7 +27,6 @@ class Linear(nn.Linear):
             if self.noraml_small:
                 init.normal_(self.weight, std = 0.01)
             else:
-                # init.xavier_uniform_(self.weight)
                 if self.bias is not None:
                     init.zeros_(self.bias)
                 
@@ -72,14 +71,10 @@ class rnn_decoding_eq(nn.Module):
             self.seqtoken = nn.Parameter(torch.randn(1,window, dz))
         else:
             seqtoken = torch.randn(1, window, dz)
-            self.register_buffer("seqtoken", seqtoken)
-            
-        # self.apply(src_utils.init_gru)
-        
+            self.register_buffer("seqtoken", seqtoken)        
     def forward(self, z, c = None):
         N,dz = z.shape
         z = z.unsqueeze(1).repeat(1, self.window, 1) # expansion  or expand(N, L, dz)
-        # z = z.unsqueeze(1).expand(N, self.window, dz) # expansion  or expand(N, L, dz)
         seqtokens = self.seqtoken.to(z.device)
         z = z + seqtokens
         
@@ -103,11 +98,6 @@ class rnn_decoding_seqtoken(nn.Module):
         self.layer = layer
         self.window = window
         self.seq_out = seq_out
-        # self.gru = nn.GRU(dz + dc, hidden_dim,
-        #                           num_layers= layer,
-        #                           batch_first = True,
-        #                           bias = True,
-        #                           dropout = dropout_)
         
         self.lstm = nn.LSTM(dz + dc, hidden_dim,
                                   num_layers= layer,
@@ -122,13 +112,10 @@ class rnn_decoding_seqtoken(nn.Module):
                 seqtoken = torch.randn(1, window, dz)
                 self.register_buffer("seqtoken", seqtoken)
         self.expansion = Linear(dz,hidden_dim, bias = False)
-        # self.apply(src_utils.init_gru)
     def forward(self, z, c = None, zin = None, c2 = None):
         N, dz = z.shape
         if not self.seq_out:
-            # print(self.seqtoken)
             seqtoken = self.seqtoken.repeat(N, 1, 1).to(z.device) # expansion
-            # seqtoken = self.seqtoken.expand(N, -1, -1).to(z.device) # expansion
             
             if c is not None:
                 c = torch.flip(c, dims = [1]) # flip the seq indices so that the hidden state can influence from the last 
@@ -137,11 +124,9 @@ class rnn_decoding_seqtoken(nn.Module):
                 seqtoken_c = seqtoken
         elif (self.seq_out) and (zin is not None): 
             seqtoken_c = zin
-        # print(seqtoken_c)
         h0 = self.expansion(z)
         h0 = h0.unsqueeze(0).repeat(self.layer, 1, 1)
         c0 = torch.zeros_like(h0).to(z.device)
-        # z_c, _ = self.gru(seqtoken_c, h0)
         z_c, (_,_) = self.lstm(seqtoken_c, (h0, c0))
 
         z_c = torch.flip(z_c, dims = [1]) # flip back to the original order
@@ -166,7 +151,6 @@ class rnn_decoding(nn.Module):
 
     def forward(self, z, c = None, zin = None):
         N, dz = z.shape
-        # z = z.unsqueeze(1).repeat(1,  self.window, 1).to(z.device) # expansion
         z = z.unsqueeze(1).expand(-1, self.window, -1).to(z.device) # expansion
         if c is not None:
             seqtoken_c = torch.concatenate((z,c), dim = -1)
@@ -176,14 +160,13 @@ class rnn_decoding(nn.Module):
         # print(seqtoken_c)
         h0 = torch.zeros((self.layer, z.shape[0], self.hidden_dim)).to(z.device)
         c0 = torch.zeros_like(h0).to(z.device)
-        # z_c, _ = self.gru(seqtoken_c, h0)
         z_c, (_,_) = self.lstm(seqtoken_c, (h0, c0))
         return z_c
 
 class wide_decoding(nn.Module):
     '''Use the input z as starting state to propagate'''
     def __init__(self, dz, dc, hidden_dim = 32, window = 100,
-                 dc2 = 0, expansion_dim = 32):
+                 dc2 = 0, expansion_dim = 80):
         super(wide_decoding, self).__init__()# TODO 
         self.hidden_dim = hidden_dim
         self.dz = dz

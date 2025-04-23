@@ -36,18 +36,6 @@ class DiagonalGaussian(nn.Module):
         """
         Computes the log probability of a given input x under the Gaussian distribution.
         """
-        # z_dim = z.shape[-1]
-        # if mu is None:
-        #     mu = self.mean
-        # if log_var is not None: std = torch.exp(0.5 * log_var)
-        # else: std = self.std
-            
-        # diff = z - mu
-        # log_prob = -0.5 * ((diff / std) ** 2)  # sum over dimensions
-        # if normalize:
-        #     log_prob -= 0.5 * z_dim * torch.log(torch.tensor(2.0 * torch.pi, device=self.device))  # Normalizing constant
-        # log_prob -= torch.log(std)  # Log of the standard deviations (for each dim)
-        # return log_prob.sum(dim = -1)
         z_dim = z.shape[-1]
 
         # Set mean
@@ -130,19 +118,6 @@ class UniformDistribution(nn.Module):
         
         """
         c_dim = c.shape[-1]
-        # if mu is not None: mu = mu
-        # else: mu = self.mean
-        # if log_var is not None: std = torch.exp(0.5 * log_var)
-        # else: std = self.std
-            
-        # diff = c - mu
-        # log_prob = -0.5 * ((diff / std) ** 2)  # sum over dimensions
-        # if normalize:
-        #     log_prob -= 0.5 * c_dim * torch.log(torch.tensor(2.0) * torch.pi)  # Normalizing constant
-        # log_prob -= torch.log(std)  # Log of the standard deviations (for each dim)
-        # return log_prob.sum(-1)
-
-       
         log_std = 0.5 * log_var  # log(std) = 0.5 * log_var
         diff = c - mu
         log_prob = -0.5 * (diff / torch.exp(log_std)) ** 2  # Quadratic term
@@ -234,7 +209,7 @@ class ContinuousCategorical(nn.Module):
                  device = "cpu"):
         """
         Continuous uniform with a categorical reparameterization trick (Gumbel-softmax is used).
-        Used if a explicit logit space of discrete code (differentiable sampling from a categorical distribution) is desired.  
+        Used if a explicit logit space of discrete code (differentiable sampling from DiscreteUniform) is desired.  
         """
         super(ContinuousCategorical, self).__init__()
         self.dist =dist
@@ -242,7 +217,7 @@ class ContinuousCategorical(nn.Module):
         self.temperature = gumbel_temperature # smaller the temp, more discrete the distribution is 
         self.decay_rate = decay_rate 
         self.device =device
-        
+        raise NotImplementedError("this is under implementation. Use categorical distribution instead")
     def sample(self, N, target:float = None):
         '''Directly sampling logits of discrete variables'''
         # N shape (*,dc_dim)
@@ -280,7 +255,7 @@ class ContinuousCategorical(nn.Module):
         if self.temperature <= 0.15:
             self.temperature = 0.15
             
-    def cross_entropy_loss(self, logit_true, logit_c): # TODO check later on 
+    def cross_entropy_loss(self, logit_true, logit_c):
         log_probs_c = F.log_softmax(logit_c, dim=-1)  # Shape: (batch_size, num_classes)
         target_probs = F.softmax(logit_true, dim=-1)  # Shape: (batch_size, num_classes)
         loss = -torch.mean(torch.sum(target_probs * log_probs_c, dim=-1)) 

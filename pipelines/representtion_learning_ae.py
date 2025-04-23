@@ -57,17 +57,6 @@ class AEPipeline(solver_base.Solver):
                 opt_R[0].zero_grad()
                 loss_R.backward()
                 
-                # param = self.ae.f_D.latent_decoder.seqtoken
-                # if param.grad is not None:
-                #         print(f"Epoch {epoch}, seqtoken grad norm: {param.grad.norm().item()} \n")
-                # else:
-                #     print("None \n")
-                        
-                # for name, param in self.ae.f_D.latent_decoder.seqtoken.named_parameters():
-                #     if param.grad is not None:
-                #         print(f"Epoch {epoch}, {name} grad norm: {param.grad.norm().item()} \n")
-                #     else:
-                #         print("None \n")
                 for m in reversed(opt_R):
                     if m: m.step()
 
@@ -127,10 +116,7 @@ class AEPipeline(solver_base.Solver):
             ALL_ZE.append(z_E)
             ALL_ZH = None
             ALL_Z = None
-            # ALL_ZH.append(z_h)
-        
-            # ALL_ZH.append(z_h)
-            # ALL_Z.append(prior_z)
+
             ALL_C = None#.append(prior_c_logit if prior_c_logit is not None else prior_c)
             ALL_Q = None #.append(q_code_mu)
             
@@ -138,22 +124,15 @@ class AEPipeline(solver_base.Solver):
             
         # On the last batch
         self.evaluation.recon_plot(x[0,:,:], x_rec[0,:,:], label = ["true", "recon"], epoch = str(epoch))
-        # Memory intensive if the total sample size is large
-        # ALL_ZE = torch.concatenate((ALL_ZE), dim = 0)
         ALL_ZE = torch.concatenate((ALL_ZE), dim = 0)
         
         if ALL_ZH is not None:
             ALL_ZH = torch.concatenate((ALL_ZH), dim = 0)
-            # print(ALL_ZH.shape)
-        # ALL_CE = torch.concatenate((ALL_CE), dim = 0)
-        # ALL_C = torch.concatenate((ALL_C), dim = 0)
-        # ALL_Q = torch.concatenate((ALL_Q), dim = 0)
         
         ALL_CGT = torch.concatenate((ALL_CGT), dim = 0)
         ALL_tidx = torch.concatenate((ALL_tidx), dim = 0)
         if self.time_embedding:
             ALL_time_tokens = torch.concatenate((ALL_time_tokens), dim = 0)
-        # self.logger.info(f"Vali: Loss R:{Loss_R_vali.avg: .4f}, Loss Disc:{Loss_Disc_vali.avg: .4f}, Loss G: {Loss_G_vali.avg: .4f}")
 
         self.evaluation.vae_qualitative_analysis(ALL_Z, ALL_ZH, ALL_ZE,
                                              ALL_tidx,

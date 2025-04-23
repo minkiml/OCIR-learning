@@ -22,14 +22,10 @@ class CMAPSS_datset(Dataset):
         super(CMAPSS_datset, self).__init__()
 
         self.X = X #[:,:,0:1] # (n, w_T, channel)
-        self.Y = Y # (n, 1) # TODO check shape 
+        self.Y = Y # (n, 1) 
         self.ocs = ocs # (n, w_T, c)
         self.time_idx = None
         
-        # print(t.shape)
-        # if t.dim() == 3: 
-        #     self.time_idx = t.view(-1,1)
-        # else:
         self.time_idx = t.view(-1,1) # (N, 1)
     def __len__(self):
         return self.X.shape[0] 
@@ -172,7 +168,6 @@ def load_CMAPSS(dataset = "FD001",
             vali_sets = data_utils.sliding_window(vali_p, vali_p_ocs, vali_p_rul, T)
             vali_p, vali_p_ocs, vali_p_rul, vali_time_idx = data_utils.parse_lr_set(vali_sets)
             
-            
         # For rul estimation, we do not need full testing data but the last window only for rul estimation. 
         if full_test: 
             pass
@@ -180,14 +175,13 @@ def load_CMAPSS(dataset = "FD001",
             test_p, testing_ocs, test_t_list, full_test_set = data_utils.format_testing_data(test_p, testing_ocs, testing_rul,
                                                     T = T, normalize_rul=normalize_rul, rectification=rectification)
         testing_rul = torch.tensor(testing_rul, dtype = torch.float32)
-        
-
-        # max_value = max(train_time_idx.max(), vali_time_idx.max(), test_t_list.max())
-        
-        testing_rul = np.clip(testing_rul, 0., rectification) # isn't this cheating?
+                
+        testing_rul = np.clip(testing_rul, 0., rectification) 
+        train_p_rul = np.clip(train_p_rul, 0., rectification) 
         if normalize_rul:
             train_p_rul = train_p_rul/ rectification
             if vali_p is not None:
+                vali_p_rul = np.clip(vali_p_rul, 0., rectification) 
                 vali_p_rul = vali_p_rul/ rectification
             testing_rul = testing_rul / rectification
             
@@ -200,6 +194,7 @@ def load_CMAPSS(dataset = "FD001",
                             shuffle = True,
                             num_workers = 10,
                             drop_last=True)
+        
         if vali_p is not None:
             logger.info(f" Validation X: {vali_p.shape}, Validation rul: {vali_p_rul.shape}, Validation ocs: {vali_p_ocs.shape}, Validation time-index: {vali_time_idx.shape}")
             vali_dataload = DataLoader(CMAPSS_datset(X = vali_p,
@@ -211,7 +206,17 @@ def load_CMAPSS(dataset = "FD001",
                                             num_workers = 10,
                                             drop_last=True)
         else:
-            vali_dataload = None
+            logger.info(f" Validation X: {train_p.shape}, Validation rul: {train_p_rul.shape}, Validation ocs: {train_p_ocs.shape}, Validation time-index: {train_time_idx.shape}")
+            vali_dataload = DataLoader(CMAPSS_datset(X = train_p,
+                                            Y = train_p_rul,
+                                            ocs = train_p_ocs,
+                                            t = train_time_idx),
+                            batch_size = batch_size,
+                            shuffle = False,
+                            num_workers = 10,
+                            drop_last=False)
+            print("no vali")
+            # vali_dataload = None
             
         logger.info(f" Testing X: {test_p.shape}, Testing rul: {testing_rul.shape}, Testing ocs: {testing_ocs.shape}, Testing time-index: {test_t_list.shape}")
         testing_dataload = DataLoader(CMAPSS_datset(X = test_p,
@@ -284,21 +289,24 @@ def load_CMAPSS(dataset = "FD001",
                 vali_p_ocs[len(vali_p)] = training_ocs[s]
                 vali_p_rul[len(vali_p)] = training_rul[s]
                 if original_X:
-                    original_vali_p[len(original_vali_p) + 1] = original_X[s]        
+                    original_vali_p[len(original_vali_p) + 1] = original_X[s]       
+                else:
+                    original_vali_p = original_X  
             else:
                 test_p[len(test_p) + 1] = training_X[s]
                 test_p_ocs[len(test_p)] = training_ocs[s]
                 test_p_rul[len(test_p)] = training_rul[s]
                 if original_X:
                     original_test_p[len(original_test_p) + 1] = original_X[s]
+                else:
+                    original_test_p = original_X 
         # Nomalization 
         normalizer = data_utils.Standardization(train_p, appr_healthy_state = 30)
         train_p = normalizer.transform(train_p)
         test_p = normalizer.transform(test_p)
-        # TODO
-        # normalizer_ori = data_utils.Standardization(original_train_p, appr_healthy_state = 40)
-        # original_train_p = normalizer_ori.transform(original_train_p)
-        # original_test_p = normalizer_ori.transform(original_test_p)   
+        if original_test_p:
+            normalizer_ori = data_utils.Standardization(original_test_p, appr_healthy_state = 30)
+            original_test_p = normalizer_ori.transform(original_test_p) 
                              
         if valid_split == 0.:
             # if no validation split
@@ -311,18 +319,11 @@ def load_CMAPSS(dataset = "FD001",
             _, val_train_sets = data_utils.apply_hyper_window(vali_sets, H = H, W = H_lookback, S = T) # hyper window of sub window sequences
             val_train_x, val_train_y, val_train_ocs, val_train_tidx = val_train_sets # total samples
             full_val = data_utils.np_to_tensor(vali_p, vali_p_ocs)
-            
-            # if original_X:
-            #     original_vali_p = normalizer_ori.transform(original_vali_p)
+
         # Training dataset
         training_sets = data_utils.sliding_window(train_p, train_p_ocs, train_p_rul, T, in_dictionary= True)
         _, training_train_sets = data_utils.apply_hyper_window(training_sets, H = H, W = H_lookback, S = T) # hyper window of sub window sequences
         trj_train_x, trj_train_y, trj_train_ocs, trj_train_tidx = training_train_sets # total samples
-        
-        # TODO
-        # training_sets = data_utils.sliding_window(train_p, train_p_ocs, train_p_rul, T, in_dictionary= True)
-        # _, training_train_sets = data_utils.apply_hyper_window(training_sets, H = H, W = H_lookback, S = T) # hyper window of sub window sequences
-        # trj_train_x, trj_train_y, trj_train_ocs, trj_train_tidx = training_train_sets # total samples
         
         # Testing dataset
         testing_sets = data_utils.sliding_window(test_p, test_p_ocs, test_p_rul, T, in_dictionary= True)

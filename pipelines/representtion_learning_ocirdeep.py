@@ -44,7 +44,7 @@ class RlPipeline_deep(solver_base.Solver):
                             ('%.5f', 'loss_ccc2'),
                             )
         
-        Loss_R = ut.Value_averager()
+        Loss_R = ut.Value_averager() 
         Loss_Disc = ut.Value_averager()
         Loss_G = ut.Value_averager()
         

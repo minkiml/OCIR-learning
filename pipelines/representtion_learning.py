@@ -63,7 +63,6 @@ class RlPipeline(solver_base.Solver):
         opt_R, opt_Disc, opt_G = self.get_optimizers()
         vali_freq = 8  # total vali is vali_freq + 1
         vali_at = self.n_epochs // vali_freq
-        # raise NotImplementedError("")
         self.vali("Initial")
         
         alpha = self.alpha
@@ -88,7 +87,7 @@ class RlPipeline(solver_base.Solver):
                 else: annealing = self.kl_annealing
                 loss_vae = alpha * (loss_REC+ (loss_KL* annealing))
                 if self.c_kl:
-                    loss_vae += alpha * (loss_klC * 0.5)
+                    loss_vae += alpha * (loss_klC * 0.2)
                 else:
                     loss_klC = torch.tensor(0.)
                 loss_vae.backward()
@@ -100,7 +99,6 @@ class RlPipeline(solver_base.Solver):
                 # (2)
                 loss_disc, D = self.ocir.L_G_discriminator(x)
                 
-                # loss_disc *= alpha
                 opt_Disc[0].zero_grad()
                 loss_disc.backward()
                 for m in reversed(opt_Disc):
@@ -113,29 +111,14 @@ class RlPipeline(solver_base.Solver):
                 
                 gen_loss, NLL_loss_Q, cc_loss_z, cc_loss_c = G
                 
-                # cc_loss = cc_loss_z + (gamma_q *cc_loss_c) # 0.2 *(cc_loss_c) # 
-                cc_loss = (1- alpha) * (cc_loss_z + (cc_loss_c)) # 0.2 *(cc_loss_c) # 
+                cc_loss = (1- alpha) * (cc_loss_z + (cc_loss_c)) 
 
                 cc_loss.backward(retain_graph = True)
-                ut.zeroout_gradient([self.ocir.G]) # no grad in G wrt cc loss
+                ut.zeroout_gradient([self.ocir.G])
                 
                 gen_loss = alpha * (gen_loss + (NLL_loss_Q * gamma_q))
                 gen_loss.backward()
                 ut.zeroout_gradient([self.ocir.shared_net, self.ocir.h])
-                # ut.zeroout_gradient([self.ocir.shared_net])
-
-                # for name, param in self.ocir.f_E.named_parameters():
-                #     if param.grad is not None:
-                #         print(f"Epoch {epoch},F_E-IN-G - {name} grad norm: {param.grad.norm().item()} \n")
-                #     else:
-                #         print("F_E-IN-G None \n")
-                # torch.nn.utils.clip_grad_norm_(self.ocir.f_C.parameters(), max_norm=1.0)
-                # for name, param in self.ocir.f_C.named_parameters():
-                #     if param.grad is not None:
-                #         print(f"Epoch {epoch},F_C-IN-G - {name} grad norm: {param.grad} \n")
-                #     else:
-                #         print("F_C-in-G None \n")
-                # loss_G.backward()
                 for m in reversed(opt_G):
                     if m: m.step()
                 
@@ -180,11 +163,6 @@ class RlPipeline(solver_base.Solver):
         ut.save_model(self.ocir, path_ = self.model_save_path, name = "OCIR")
         
     def vali(self, epoch): # TODO eval
-        # Note that it is "not necessary" as we are doing unsupervised learning. 
-        # We mainly check whether the objective functions converge or not.
-        # Loss_R_vali = ut.Value_averager()
-        # Loss_Disc_vali = ut.Value_averager()
-        # Loss_G_vali = ut.Value_averager()
         self.ocir.train(False)
         
         ALL_ZE = []
@@ -202,7 +180,7 @@ class RlPipeline(solver_base.Solver):
         
         ALL_tidx = []
         with torch.no_grad():
-            for i, (x,_, ocs, tidx) in enumerate(self.training_data): 
+            for i, (x,_, ocs, tidx) in enumerate(self.training_data if self.valid_split != 0. else self.val_data):  # self.val_data
                 x = x.to(self.device)
                 tidx = tidx.to(self.device)        
                 # Inference
@@ -274,7 +252,6 @@ class RlPipeline(solver_base.Solver):
         ALL_Q = torch.concatenate((ALL_Q), dim = 0)
         ALL_CGT = torch.concatenate((ALL_CGT), dim = 0)
         ALL_tidx = torch.concatenate((ALL_tidx), dim = 0)
-        # self.logger.info(f"Vali: Loss R:{Loss_R_vali.avg: .4f}, Loss Disc:{Loss_Disc_vali.avg: .4f}, Loss G: {Loss_G_vali.avg: .4f}")
         # print(f"total samples in vali:  {ALL_CGT.shape[0]}")  10,000 > is good
         max_num = -1
         self.evaluation.qualitative_analysis(ALL_Z[:max_num], ALL_ZH[:max_num], ALL_ZE[:max_num], ALL_Z0_E[:max_num],

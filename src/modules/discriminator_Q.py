@@ -105,25 +105,15 @@ class CodePosterior(nn.Module): # bunch of encoder layers
             self.Q_layers = nn.Sequential(src_utils.Linear(d_model, d_model),
                                                       nn.LeakyReLU(0.2),
                                                       src_utils.Linear(d_model, d_model))
-            # self.Q_layers = nn.Sequential(src_utils.Linear(d_model, d_model),
-            #                                           nn.LeakyReLU(0.2),
-            #                                           nn.Linear(d_model, d_model),
-            #                                           nn.LeakyReLU(0.2)
-                                                    #   ,
-                                                    #   nn.LeakyReLU(0.2),
-                                                    #   nn.Linear(d_model // 2, d_model)
-                                                    #   )
+
         if c_type == "discrete":
             self.classifier = src_utils.Linear(self.d_model_c,self.dc, bias=False)
             self.softmax = nn.Softmax(-1)
         elif c_type == "continuous":
             # soft fitting
             if c_posterior_param == "soft":
-                # self.code_mu_logvar = src_utils.Linear(self.d_model_c, self.dc * 2)
                 self.code_mu = src_utils.Linear(d_model, self.dc, bias=False)
                 self.code_logvar = src_utils.Linear(d_model, self.dc, bias=False)
-                # self.code_logvar.weight.data.fill_(-3)  # Initialize log-variance weights to prevent large sigma
-                # self.code_logvar.bias.data.fill_(-3)
             # hard fitting
             else: self.code_mu = src_utils.Linear(self.d_model_c,self.dc, bias=False)
 
@@ -143,19 +133,11 @@ class CodePosterior(nn.Module): # bunch of encoder layers
         
         elif self.c_type == "continuous":
             if self.c_posterior_param == "soft":
-                # code_emb = self.code_mu_logvar(code_emb)
-                # mu, log_var = torch.chunk(code_emb, 2, dim=-1)
                 mu = self.code_mu(code_emb)
                 log_var = self.code_logvar(code_emb)
-                # print("mu Q':", mu.mean())
-                # print("logvar Q':", log_var.mean())
-                # mu = torch.clamp(mu, min=-1.5, max=1.5)
-                # log_var = torch.clamp(log_var, min=-4, max=0)
                 return mu, log_var
             else:
                 mu = self.code_mu(code_emb)
-                # mu = torch.clamp(mu, min=-1.5, max=1.5)
-                # print("mu Q':", mu.mean())
                 return mu, None
     def inference(self, x, logits = False):
         c, log_var = self.forward(x)
@@ -213,14 +195,6 @@ class CodePosterior_seq(nn.Module):
         if c_type == "discrete":
             self.classifier = src_utils.Linear(self.d_model_c,self.dc, bias=False)
             self.softmax = nn.Softmax(-1)
-        # elif c_type == "continuous":
-        #     # soft fitting
-        #     if self.c_posterior_param == "soft":
-        #         self.code_mu_logvar = src_utils.Linear(self.d_model_c, self.dc * 2, bias=False) #torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(self.d_model_c, self.dc * 2, bias=False))
-        #     # hard fitting
-        #     else: 
-        #         self.code_mu = src_utils.Linear(self.d_model_c,self.dc, bias=False) # torch.nn.utils.parametrizations.weight_norm(src_utils.Linear(self.d_model_c,self.dc, bias=False))
-
     def forward(self, x, tidx = None):
         N, L, c = x.shape
         if not self.shared_layer:
@@ -258,21 +232,6 @@ class CodePosterior_seq(nn.Module):
         if self.c_type == "discrete":
             logit = self.classifier(code_emb)
             return logit
-        # elif self.c_type == "continuous":
-        #     if self.c_posterior_param == "soft":
-        #         code_emb = self.code_mu_logvar(code_emb)
-        #         mu, log_var = torch.chunk(code_emb, 2, dim=-1)
-        #         # mu = torch.clamp(mu, min=-1.5, max=1.5)
-        #         # log_var = torch.clamp(log_var, min=-4, max=0) # TODO not limit?
-        #         # mu = torch.clamp(mu, min=-1.5, max=1.5)
-        #         # log_var = torch.clamp(log_var, min=-4, max=0)
-        #         return mu.view(N,L,self.dc), log_var.view(N,L,self.dc)
-            
-        #     else:
-        #         mu = self.code_mu(code_emb)
-        #         # mu = torch.clamp(mu, min=-1.5, max=1.5)
-        #         # mu = torch.clamp(mu, min=-1.5, max=1.5)
-        #         return mu.view(N,L,self.dc), None
         
     def inference(self, x, logits = False):
         c = self.forward(x)
