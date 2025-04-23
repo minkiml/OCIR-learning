@@ -1,6 +1,6 @@
 # OCIR: Operation Condition-Invariant Representation Learning for Machine Prognostics
 
-This repository is the official implementation of "Operation Condition-Invariant Representation Learning for Machine Prognostics" for quick demo.
+This repository is the official implementation of "Operation Condition-Invariant Representation Learning for Machine Prognostics" for quick demo. The work is currently submitted to a journal.
 
 <!-- [Paper link](link).  -->
 
